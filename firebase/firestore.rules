@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActive() {
+      return isSignedIn() && userDoc().active == true;
+    }
+
+    function isAdmin() {
+      return isActive() && userDoc().role == 'ADMIN';
+    }
+
+    function isWorker() {
+      return isActive() && userDoc().role == 'WORKER';
+    }
+
+    function isAssigned(taskData) {
+      return request.auth.uid in taskData.assignedUserIds;
+    }
+
+    // ——— users ———
+    match /users/{uid} {
+      allow read: if isActive();
+
+      allow create: if isAdmin()
+        || (isSignedIn()
+            && uid == request.auth.uid
+            && request.resource.data.role == 'WORKER'
+            && request.resource.data.active == true
+            && request.resource.data.uid == uid);
+
+      allow update: if isAdmin()
+        || (isActive()
+            && uid == request.auth.uid
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['role', 'active', 'userType']));
+
+      allow delete: if false;
+    }
+
+    // ——— tasks ———
+    match /tasks/{taskId} {
+      // Lectura global para personal activo (chequeo cruzado en campo)
+      allow read: if isActive();
+
+      allow create: if isAdmin()
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.createdBy == request.auth.uid;
+
+      // ADMIN: cualquier actualización (validar, devolver, editar)
+      allow update: if isAdmin();
+
+      // WORKER asignado: PENDING → IN_REVIEW
+      allow update: if isWorker()
+        && isAssigned(resource.data)
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'IN_REVIEW'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status']);
+
+      // WORKER no asignado (chequeo cruzado): PENDING → IN_REVIEW
+      allow update: if isWorker()
+        && !isAssigned(resource.data)
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'IN_REVIEW'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status']);
+
+      allow delete: if isAdmin();
+    }
+
+    // ——— taskLogs (auditoría) ———
+    match /taskLogs/{logId} {
+      allow read: if isAdmin()
+        || (isWorker() && resource.data.completedByUserId == request.auth.uid);
+
+      allow create: if isActive()
+        && request.resource.data.completedByUserId == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'taskId',
+          'completionDate',
+          'assignedUsersList',
+          'completedByUserId',
+          'completedByName',
+          'wasAssignedToHim',
+          'comments',
+          'concatenatedText',
+          'locationDateText'
+        ]);
+
+      allow update, delete: if isAdmin();
+    }
+  }
+}

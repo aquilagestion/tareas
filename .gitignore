@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Builds
+dist/
+build/
+.next/
+out/
+.expo/
+android/
+ios/
+web-build/
+*.apk
+*.aab
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+google-services.json
+GoogleService-Info.plist
+serviceAccount*.json
+secrets/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*.log
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Turbo
+.turbo/
+
+# Functions
+functions/lib/

@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+:root {
+  --grefa-green: #2f6b3a;
+  --grefa-blue: #1d4f91;
+  --grefa-sand: #f5f1e8;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, sans-serif;
+}

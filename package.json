@@ -1,0 +1,27 @@
+{
+  "name": "grefa-tareas",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sistema multiplataforma GREFA — tareas, gastos y liquidación (Web + APK + Firebase)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @grefa/web",
+    "dev:mobile": "npm run start -w @grefa/mobile",
+    "build:web": "npm run build -w @grefa/web",
+    "build:apk": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-apk-local.ps1",
+    "build:apk:eas": "npm run build:apk:eas -w @grefa/mobile",
+    "lint": "npm run lint -w @grefa/web --if-present && npm run lint -w @grefa/shared --if-present",
+    "typecheck": "npm run typecheck -w @grefa/shared --if-present && npm run typecheck -w @grefa/firebase --if-present",
+    "firebase:deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes --project grefa-tareas",
+    "firebase:deploy:functions": "firebase deploy --only functions --project grefa-tareas",
+    "firebase:emulators": "firebase emulators:start --project grefa-tareas",
+    "seed:users": "node scripts/seed-admin.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@10"
+}
