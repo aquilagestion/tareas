@@ -33,8 +33,37 @@
       <p class="muted">Solo se listan fichas <strong>activas</strong>. Edita fechas de comienzo/fin para prácticas o voluntariado temporal. Los días y horas de cada semana se definen en el <a href="/cuadrante/">cuadrante</a>, pulsando sobre el nombre.</p>
     </div>
 
-    <section class="card">
-      <h2 class="h2">Nuevo alta</h2>
+    <div class="form-actions" style="margin:0">
+      <button type="button" class="btn btn-primary" id="btnNewStaff">+ Nuevo trabajador</button>
+      <span class="small muted">Da de alta una ficha nueva con su acceso a la app.</span>
+    </div>
+    <p id="altaDone" class="ok" style="display:none"></p>
+
+    <section class="card" style="padding:0">
+      <div style="padding:1rem 1rem 0;display:flex;flex-wrap:wrap;gap:1rem;align-items:end">
+        <label class="field" style="margin:0;min-width:14rem">Editar inactivo
+          <select class="input" id="pickInactive"><option value="">— Buscar ficha inactiva —</option></select>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-personal" id="usersTable">
+          <thead>
+            <tr>
+              <th>Nombre</th><th>DNI</th><th>Tipo</th><th>Email</th><th>Teléfono</th>
+              <th>Rol</th><th>Horario semanal</th><th>Desde</th><th>Hasta</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="10" class="muted" style="text-align:center;padding:1.5rem">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="altaModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:52rem">
+      <h2 class="h2">Nuevo trabajador</h2>
       <form id="altaForm" class="stack" style="margin-top:1rem">
         <div class="grid grid-3">
           <label class="field">Nombre completo<input class="input" id="fullName" required/></label>
@@ -73,31 +102,13 @@
         </fieldset>
         <p id="formErr" class="alert" style="display:none"></p>
         <p id="formOk" class="ok" style="display:none"></p>
-        <button class="btn btn-primary" id="btnAlta" type="submit">Dar de alta</button>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnAlta" type="submit">Dar de alta</button>
+          <button class="btn btn-secondary" type="button" id="btnCloseAlta">Cerrar</button>
+        </div>
       </form>
-    </section>
-
-    <section class="card" style="padding:0">
-      <div style="padding:1rem 1rem 0;display:flex;flex-wrap:wrap;gap:1rem;align-items:end">
-        <label class="field" style="margin:0;min-width:14rem">Editar inactivo
-          <select class="input" id="pickInactive"><option value="">— Buscar ficha inactiva —</option></select>
-        </label>
-      </div>
-      <div class="table-wrap">
-        <table class="table table-personal" id="usersTable">
-          <thead>
-            <tr>
-              <th>Nombre</th><th>DNI</th><th>Tipo</th><th>Email</th><th>Teléfono</th>
-              <th>Rol</th><th>Horario semanal</th><th>Desde</th><th>Hasta</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="usersBody">
-            <tr><td colspan="10" class="muted" style="text-align:center;padding:1.5rem">Cargando…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+    </div>
+  </div>
 
   <div id="editModal" class="modal-backdrop" hidden>
     <div class="modal">
@@ -254,6 +265,26 @@
     const altaSched = makeScheduleEditor("alta", "role");
     const editSched = makeScheduleEditor("edit", "editRole");
 
+    /** El alta parte siempre en blanco: la pantalla base es la tabla. */
+    function openAlta() {
+      $("altaForm").reset();
+      $("password").value = DEFAULT_PASSWORD;
+      $("role").value = "WORKER";
+      $("userType").value = "TRABAJADOR_GREFA";
+      altaSched.load(null);
+      showError($("formErr"), null);
+      $("formOk").style.display = "none";
+      $("altaDone").style.display = "none";
+      $("altaModal").hidden = false;
+      $("fullName").focus();
+    }
+
+    $("btnNewStaff").onclick = openAlta;
+    $("btnCloseAlta").onclick = () => ($("altaModal").hidden = true);
+    $("altaModal").addEventListener("click", (e) => {
+      if (e.target === $("altaModal")) $("altaModal").hidden = true;
+    });
+
     subscribeAllUsers((users) => {
       allUsers = users;
       const inactive = users.filter((u) => u.active === false);
@@ -401,6 +432,7 @@
       e.preventDefault();
       showError($("formErr"), null);
       $("formOk").style.display = "none";
+      const nuevoEmail = $("email").value.trim();
       if (!isValidDni($("dni").value)) {
         showError($("formErr"), "DNI/NIE no válido.");
         return;
@@ -427,8 +459,9 @@
           startDate: $("startDate").value,
           endDate: $("endDate").value,
         });
-        $("formOk").textContent = `Alta correcta: ${$("email").value}`;
-        $("formOk").style.display = "block";
+        $("altaModal").hidden = true;
+        $("altaDone").textContent = `Alta correcta: ${nuevoEmail}. Ya aparece en la tabla.`;
+        $("altaDone").style.display = "block";
         $("altaForm").reset();
         $("password").value = DEFAULT_PASSWORD;
         $("role").value = "WORKER";

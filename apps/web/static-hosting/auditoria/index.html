@@ -169,7 +169,7 @@
 
     $("filter").addEventListener("input", render);
 
-    $("btnPrintReport").addEventListener("click", () => {
+    $("btnPrintReport").addEventListener("click", async () => {
       const from = $("reportFrom").value;
       const to = $("reportTo").value || from;
       if (!from) {

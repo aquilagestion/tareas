@@ -14,11 +14,12 @@ for (const file of files) {
     console.log(`SIN SCRIPT  ${file}`);
     continue;
   }
-  const body = match[1]
-    .replace(/^\s*import[\s\S]*?from\s+["'][^"']+["'];\s*$/gm, "")
-    .replace(/\bawait\b/g, "");
+  const body = match[1].replace(/^\s*import[\s\S]*?from\s+["'][^"']+["'];\s*$/gm, "");
   try {
-    new Function(body);
+    // Se envuelve en async en lugar de borrar los `await`: así se admite el
+    // await de primer nivel y, a la vez, salta el que esté dentro de una
+    // función que no es async, que es un error capaz de tumbar el módulo.
+    new Function(`return (async () => {\n${body}\n});`);
     console.log(`OK          ${file}`);
   } catch (e) {
     bad += 1;
