@@ -137,16 +137,25 @@ export function scheduleSummary(s?: WeeklySchedule | null): string {
   return parts.join(" · ");
 }
 
+interface OnDutyPerson {
+  uid: string;
+  fullName?: string;
+  role?: string;
+  userType?: string;
+  schedule?: WeeklySchedule | null;
+}
+
 /**
  * Quién tenía turno cada día, combinando las marcas del cuadrante con los
- * horarios. Sirve para la cabecera del informe diario de auditoría.
+ * horarios. Sirve para la cabecera del informe diario de auditoría, que
+ * necesita el rol y el tipo de cada persona para encasillarla.
  */
-export function onDutyNamesByDate(
+export function onDutyStaffByDate(
   dates: string[],
-  people: Array<{ uid: string; fullName?: string; schedule?: WeeklySchedule | null }>,
+  people: OnDutyPerson[],
   marks: Record<string, boolean>
-): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
+): Record<string, Array<{ fullName: string; role?: string; userType?: string }>> {
+  const out: Record<string, Array<{ fullName: string; role?: string; userType?: string }>> = {};
   dates.forEach((dateKey) => {
     out[dateKey] = people
       .filter(
@@ -154,8 +163,12 @@ export function onDutyNamesByDate(
           resolveMark(marks[`${dateKey}|${p.uid}`], plannedState(p.schedule, dateKey))
             .state === "AVAILABLE"
       )
-      .map((p) => String(p.fullName || "").trim())
-      .filter(Boolean);
+      .map((p) => ({
+        fullName: String(p.fullName || "").trim(),
+        role: p.role,
+        userType: p.userType,
+      }))
+      .filter((p) => p.fullName);
   });
   return out;
 }

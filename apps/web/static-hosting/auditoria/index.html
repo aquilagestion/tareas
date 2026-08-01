@@ -55,7 +55,7 @@
     import { requireAdmin, renderNav, logout, showError, formatTaskWhen, escapeHtml, $, db } from "/js/admin.js";
     import { APP_VERSION } from "/js/version.js";
     import { printDailyAuditReport } from "/js/audit-daily-report.js";
-    import { onDutyNamesByDate } from "/js/schedule.js";
+    import { onDutyStaffByDate } from "/js/schedule.js";
     import { enumerateLocalDates } from "/js/date-range.js";
     import { collection, query, where, orderBy, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
@@ -76,8 +76,12 @@
       return ts.toDate().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
     }
 
-    /** Personal con turno cada día del rango: marcas del cuadrante + horarios. */
-    async function loadOnDuty(from, to) {
+    /**
+     * Personal para la cabecera: quién tenía turno cada día (marcas del cuadrante
+     * más horarios) y las fichas completas, que dan el rol y el tipo de quien
+     * realizó tareas sin estar previsto.
+     */
+    async function loadStaff(from, to) {
       const dates = enumerateLocalDates(from, to || from);
       if (!dates.length) return {};
       const [usersSnap, availSnap] = await Promise.all([
@@ -98,7 +102,14 @@
         const x = d.data();
         if (x.dateKey && x.uid) marks[`${x.dateKey}|${x.uid}`] = x.available === true;
       });
-      return onDutyNamesByDate(dates, people, marks);
+      return {
+        onDutyByDate: onDutyStaffByDate(dates, people, marks),
+        directory: people.map((u) => ({
+          fullName: String(u.fullName || "").trim(),
+          role: u.role,
+          userType: u.userType,
+        })),
+      };
     }
 
     async function loadLogs() {
@@ -181,14 +192,14 @@
         return;
       }
       showError($("err"), "");
-      const onDutyByDate = await loadOnDuty(from, to);
+      const staff = await loadStaff(from, to);
       const result = printDailyAuditReport(
         tasks,
         logsByTask,
         from,
         to,
         profile.fullName,
-        onDutyByDate
+        staff
       );
       if (!result.ok) showError($("err"), result.error || "No se pudo generar el informe.");
     });

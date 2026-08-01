@@ -3,6 +3,8 @@
 import { GREFA_LOGO_DATA_URI } from "./grefa-logo-data.js";
 
 const ROWS_PER_PAGE = 10;
+const RESP_SLOTS = 3;
+const AYUD_SLOTS = 6;
 
 function formatReportDateShort(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -111,16 +113,74 @@ function chunkDayPages(rows) {
   return pages;
 }
 
+/** Sufijo que acompaña al nombre en la columna de ayudantes. */
+const TYPE_SUFFIX = {
+  TRABAJADOR_GREFA: "T",
+  VOLUNTARIO: "V",
+  PERSONAL_PRACTICAS: "P",
+};
+
+/** Orden de la columna de ayudantes: GREFA, voluntariado y prácticas. */
+const TYPE_ORDER = ["TRABAJADOR_GREFA", "VOLUNTARIO", "PERSONAL_PRACTICAS"];
+
+function staffKey(name) {
+  return String(name ?? "").trim().toLocaleLowerCase("es");
+}
+
+/** Sin tipo se cuenta como trabajador de GREFA, que es el caso corriente. */
+function staffType(ref) {
+  const t = String(ref.userType || "").trim();
+  return TYPE_SUFFIX[t] ? t : TYPE_ORDER[0];
+}
+
+function ayudanteLabel(ref) {
+  return `${ref.fullName} -${TYPE_SUFFIX[staffType(ref)]}-`;
+}
+
 /**
- * Ayudantes del día: quien tuviera turno en el cuadrante más quien realizara
- * alguna tarea, aunque no estuviera previsto. El responsable no se repite.
+ * Cabecera del día: los administradores van a RESPONSABLES y el resto a
+ * AYUDANTES con su tipo entre guiones. Entran tanto quien tuviera turno en el
+ * cuadrante como quien realizara alguna tarea sin estar previsto; a quien no
+ * se encuentre en las fichas se le supone trabajador de GREFA.
  */
-function buildStaffLists(rows, responsibleName, onDutyNames = []) {
+function buildStaffLists(rows, responsibleName, onDuty = [], directory = []) {
+  const fichas = new Map();
+  for (const ref of [...directory, ...onDuty]) {
+    const key = staffKey(ref?.fullName);
+    if (!key) continue;
+    fichas.set(key, { ...(fichas.get(key) || {}), ...ref });
+  }
+
+  const present = new Map();
+  for (const name of [...onDuty.map((p) => p?.fullName), ...rows.map((r) => r.performedBy)]) {
+    const key = staffKey(name);
+    if (!key || present.has(key)) continue;
+    present.set(key, fichas.get(key) || { fullName: String(name).trim() });
+  }
+
   const responsible = String(responsibleName || "").trim();
-  const ayudantes = uniqueNames([...onDutyNames, ...rows.map((r) => r.performedBy)])
-    .filter((n) => n !== responsible)
-    .sort((a, b) => a.localeCompare(b, "es"));
-  const responsables = responsible ? [responsible] : [];
+  const responsibleKey = staffKey(responsible);
+  const people = [...present.values()].filter(
+    (p) => staffKey(p.fullName) !== responsibleKey
+  );
+
+  const responsables = uniqueNames([
+    responsible,
+    ...people
+      .filter((p) => p.role === "ADMIN")
+      .map((p) => p.fullName)
+      .sort((a, b) => a.localeCompare(b, "es")),
+  ]);
+
+  const ayudantes = people
+    .filter((p) => p.role !== "ADMIN")
+    .sort(
+      (a, b) =>
+        TYPE_ORDER.indexOf(staffType(a)) - TYPE_ORDER.indexOf(staffType(b)) ||
+        a.fullName.localeCompare(b.fullName, "es")
+    )
+    .map(ayudanteLabel);
+
   return { responsables, ayudantes };
 }
 
@@ -142,9 +202,16 @@ function buildMaterialText(rows) {
     .join("\n");
 }
 
-function buildExtraAyudantesNote(ayudantes) {
-  if (ayudantes.length <= 6) return "";
-  return `Ayudantes adicionales: ${ayudantes.slice(6).join(", ")}`;
+/** La cabecera solo tiene tres huecos de responsable y seis de ayudante. */
+function buildExtraStaffNote(staff) {
+  const parts = [];
+  if (staff.responsables.length > RESP_SLOTS) {
+    parts.push(`Responsables adicionales: ${staff.responsables.slice(RESP_SLOTS).join(", ")}`);
+  }
+  if (staff.ayudantes.length > AYUD_SLOTS) {
+    parts.push(`Ayudantes adicionales: ${staff.ayudantes.slice(AYUD_SLOTS).join(", ")}`);
+  }
+  return parts.join("\n");
 }
 
 function markCell(on) {
@@ -203,10 +270,8 @@ function taskRowHtml(row, index) {
   </tr>`;
 }
 
-function sheetHtml(pageRows, dateStr, materialText, extraNotes, responsibleName, pageBreak, onDutyNames = []) {
-  const dayRows = pageRows.filter((r) => !r.empty);
-  const staff = buildStaffLists(dayRows, responsibleName, onDutyNames);
-  const ayudSlots = staff.ayudantes.slice(0, 6);
+function sheetHtml(pageRows, dateStr, materialText, extraNotes, staff, pageBreak) {
+  const ayudSlots = staff.ayudantes.slice(0, AYUD_SLOTS);
   const fecha = formatReportDateShort(dateStr);
   const tasksBody = pageRows.map((r, i) => taskRowHtml(r, i)).join("");
 
@@ -398,6 +463,9 @@ function buildReportHtml(sheetsHtml, title) {
  */
 /**
  * @param {string} responsibleName Administrador con sesión abierta (responsable del informe).
+ * @param {{onDutyByDate?: Record<string, Array<{fullName: string, role?: string, userType?: string}>>,
+ *          directory?: Array<{fullName: string, role?: string, userType?: string}>}} staff
+ *        Quién tenía turno cada día y todas las fichas, para la cabecera.
  */
 export function printDailyAuditReport(
   tasks,
@@ -405,7 +473,7 @@ export function printDailyAuditReport(
   dateFrom,
   dateTo,
   responsibleName = "",
-  onDutyByDate = {}
+  staff = {}
 ) {
   const dates = enumerateDates(dateFrom, dateTo || dateFrom);
   if (!dates.length) {
@@ -416,12 +484,16 @@ export function printDailyAuditReport(
   const sheetParts = [];
   dates.forEach((dateStr, dateIdx) => {
     const rows = tasksForDailyReport(tasks, logsByTask, dateStr);
-    const onDuty = onDutyByDate[dateStr] || [];
     totalTasks += rows.length;
     const materialText = buildMaterialText(rows);
-    const extraNotes = buildExtraAyudantesNote(
-      buildStaffLists(rows, responsibleName, onDuty).ayudantes
+    /** Una sola cabecera por día: se repite igual en las hojas de continuación. */
+    const dayStaff = buildStaffLists(
+      rows,
+      responsibleName,
+      (staff.onDutyByDate || {})[dateStr] || [],
+      staff.directory || []
     );
+    const extraNotes = buildExtraStaffNote(dayStaff);
     const dayPages = chunkDayPages(rows);
     dayPages.forEach((pageRows, pageIdx) => {
       const isLastSheet =
@@ -434,7 +506,7 @@ export function printDailyAuditReport(
         notes += `(continuación — ${formatReportDateShort(dateStr)})`;
       }
       sheetParts.push(
-        sheetHtml(pageRows, dateStr, mat, notes, responsibleName, pageBreak, onDuty)
+        sheetHtml(pageRows, dateStr, mat, notes, dayStaff, pageBreak)
       );
     });
   });

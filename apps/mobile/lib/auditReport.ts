@@ -3,8 +3,9 @@ import { getDb } from "@grefa/firebase";
 import {
   buildDailyAuditReportHtml,
   enumerateLocalDates,
-  onDutyNamesByDate,
+  onDutyStaffByDate,
   type LogsByTask,
+  type ReportStaffInfo,
   type Task,
   type User,
 } from "@grefa/shared";
@@ -12,8 +13,12 @@ import { shareHtmlAsPdf } from "./shareExport";
 
 export type { LogsByTask };
 
-/** Personal con turno cada día del rango: marcas del cuadrante + horarios. */
-async function loadOnDuty(dates: string[]): Promise<Record<string, string[]>> {
+/**
+ * Personal para la cabecera del informe: quién tenía turno cada día (marcas del
+ * cuadrante más horarios) y las fichas completas, que dan el rol y el tipo de
+ * quien realizó tareas sin estar previsto.
+ */
+async function loadStaff(dates: string[]): Promise<ReportStaffInfo> {
   if (!dates.length) return {};
   const db = getDb();
   const [usersSnap, availSnap] = await Promise.all([
@@ -34,7 +39,14 @@ async function loadOnDuty(dates: string[]): Promise<Record<string, string[]>> {
     const x = d.data() as { dateKey?: string; uid?: string; available?: boolean };
     if (x.dateKey && x.uid) marks[`${x.dateKey}|${x.uid}`] = x.available === true;
   });
-  return onDutyNamesByDate(dates, people, marks);
+  return {
+    onDutyByDate: onDutyStaffByDate(dates, people, marks),
+    directory: people.map((u) => ({
+      fullName: String(u.fullName || "").trim(),
+      role: u.role,
+      userType: u.userType,
+    })),
+  };
 }
 
 export async function exportAuditReportPdf(
@@ -49,9 +61,9 @@ export async function exportAuditReportPdf(
   }
 
   const dates = enumerateLocalDates(dateFrom, dateTo || dateFrom);
-  let onDutyByDate: Record<string, string[]> = {};
+  let staff: ReportStaffInfo = {};
   try {
-    onDutyByDate = await loadOnDuty(dates);
+    staff = await loadStaff(dates);
   } catch {
     /* sin cuadrante el informe sale con los realizadores */
   }
@@ -63,7 +75,7 @@ export async function exportAuditReportPdf(
     dateTo,
     responsibleName,
     undefined,
-    onDutyByDate
+    staff
   );
   if (!result.ok || !result.html) {
     throw new Error(result.error || "No se pudo generar el informe.");

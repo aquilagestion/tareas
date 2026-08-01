@@ -2,6 +2,8 @@ import { enumerateLocalDates } from "./dates";
 import type { Task, TaskLog } from "./types";
 
 const ROWS_PER_PAGE = 10;
+const RESP_SLOTS = 3;
+const AYUD_SLOTS = 6;
 const DEFAULT_LOGO_URL = "https://grefa-tareas.web.app/img/grefa-logo.png";
 
 export type LogsByTask = Record<string, TaskLog>;
@@ -149,21 +151,93 @@ function chunkDayPages(rows: ReportRow[]): ReportRow[][] {
   return pages;
 }
 
+/** Lo que hace falta de cada ficha para encasillarla en la cabecera. */
+export interface ReportStaffRef {
+  fullName: string;
+  role?: string;
+  userType?: string;
+}
+
+/** Sufijo que acompaña al nombre en la columna de ayudantes. */
+const TYPE_SUFFIX: Record<string, string> = {
+  TRABAJADOR_GREFA: "T",
+  VOLUNTARIO: "V",
+  PERSONAL_PRACTICAS: "P",
+};
+
+/** Orden de la columna de ayudantes: GREFA, voluntariado y prácticas. */
+const TYPE_ORDER = ["TRABAJADOR_GREFA", "VOLUNTARIO", "PERSONAL_PRACTICAS"];
+
+function staffKey(name: unknown): string {
+  return String(name ?? "").trim().toLocaleLowerCase("es");
+}
+
+/** Sin tipo se cuenta como trabajador de GREFA, que es el caso corriente. */
+function staffType(ref: ReportStaffRef): string {
+  const t = String(ref.userType || "").trim();
+  return TYPE_SUFFIX[t] ? t : TYPE_ORDER[0];
+}
+
+function ayudanteLabel(ref: ReportStaffRef): string {
+  return `${ref.fullName} -${TYPE_SUFFIX[staffType(ref)]}-`;
+}
+
 /**
- * Ayudantes del día: quien tuviera turno en el cuadrante más quien realizara
- * alguna tarea, aunque no estuviera previsto. El responsable no se repite.
+ * Cabecera del día: los administradores van a RESPONSABLES y el resto a
+ * AYUDANTES con su tipo entre guiones. Entran tanto quien tuviera turno en el
+ * cuadrante como quien realizara alguna tarea sin estar previsto; a quien no
+ * se encuentre en las fichas se le supone trabajador de GREFA.
  */
 function buildStaffLists(
   rows: ReportRow[],
   responsibleName: string,
-  onDutyNames: string[] = []
+  onDuty: ReportStaffRef[] = [],
+  directory: ReportStaffRef[] = []
 ) {
+  const fichas = new Map<string, ReportStaffRef>();
+  for (const ref of [...directory, ...onDuty]) {
+    const key = staffKey(ref?.fullName);
+    if (!key) continue;
+    const prev = fichas.get(key);
+    fichas.set(key, prev ? { ...prev, ...ref } : ref);
+  }
+
+  const present = new Map<string, ReportStaffRef>();
+  for (const name of [...onDuty.map((p) => p?.fullName), ...rows.map((r) => r.performedBy)]) {
+    const key = staffKey(name);
+    if (!key || present.has(key)) continue;
+    present.set(key, fichas.get(key) ?? { fullName: String(name).trim() });
+  }
+
   const responsible = String(responsibleName || "").trim();
-  const ayudantes = uniqueNames([...onDutyNames, ...rows.map((r) => r.performedBy)])
-    .filter((n) => n !== responsible)
-    .sort((a, b) => a.localeCompare(b, "es"));
-  const responsables = responsible ? [responsible] : [];
+  const responsibleKey = staffKey(responsible);
+  const people = [...present.values()].filter(
+    (p) => staffKey(p.fullName) !== responsibleKey
+  );
+
+  const responsables = uniqueNames([
+    responsible,
+    ...people
+      .filter((p) => p.role === "ADMIN")
+      .map((p) => p.fullName)
+      .sort((a, b) => a.localeCompare(b, "es")),
+  ]);
+
+  const ayudantes = people
+    .filter((p) => p.role !== "ADMIN")
+    .sort(
+      (a, b) =>
+        TYPE_ORDER.indexOf(staffType(a)) - TYPE_ORDER.indexOf(staffType(b)) ||
+        a.fullName.localeCompare(b.fullName, "es")
+    )
+    .map(ayudanteLabel);
+
   return { responsables, ayudantes };
+}
+
+interface StaffLists {
+  responsables: string[];
+  ayudantes: string[];
 }
 
 function buildMaterialText(rows: ReportRow[]): string {
@@ -176,9 +250,16 @@ function buildMaterialText(rows: ReportRow[]): string {
     .join("\n");
 }
 
-function buildExtraAyudantesNote(ayudantes: string[]): string {
-  if (ayudantes.length <= 6) return "";
-  return `Ayudantes adicionales: ${ayudantes.slice(6).join(", ")}`;
+/** La cabecera solo tiene tres huecos de responsable y seis de ayudante. */
+function buildExtraStaffNote(staff: StaffLists): string {
+  const parts: string[] = [];
+  if (staff.responsables.length > RESP_SLOTS) {
+    parts.push(`Responsables adicionales: ${staff.responsables.slice(RESP_SLOTS).join(", ")}`);
+  }
+  if (staff.ayudantes.length > AYUD_SLOTS) {
+    parts.push(`Ayudantes adicionales: ${staff.ayudantes.slice(AYUD_SLOTS).join(", ")}`);
+  }
+  return parts.join("\n");
 }
 
 function markCell(on: boolean): string {
@@ -242,14 +323,11 @@ function sheetHtml(
   dateStr: string,
   materialText: string,
   extraNotes: string,
-  responsibleName: string,
+  staff: StaffLists,
   pageBreak: boolean,
-  logoUrl: string,
-  onDutyNames: string[]
+  logoUrl: string
 ): string {
-  const dayRows = pageRows.filter((r) => !r.empty);
-  const staff = buildStaffLists(dayRows, responsibleName, onDutyNames);
-  const ayudSlots = staff.ayudantes.slice(0, 6);
+  const ayudSlots = staff.ayudantes.slice(0, AYUD_SLOTS);
   const fecha = formatReportDateShort(dateStr);
   const tasksBody = pageRows.map((r, i) => taskRowHtml(r, i)).join("");
 
@@ -428,6 +506,13 @@ export interface AuditReportResult {
   error?: string;
 }
 
+export interface ReportStaffInfo {
+  /** Quién tenía turno en el cuadrante, por clave YYYY-MM-DD */
+  onDutyByDate?: Record<string, ReportStaffRef[]>;
+  /** Todas las fichas, para saber el rol y el tipo de quien realizó tareas */
+  directory?: ReportStaffRef[];
+}
+
 export function buildDailyAuditReportHtml(
   tasks: Task[],
   logsByTask: LogsByTask,
@@ -435,8 +520,7 @@ export function buildDailyAuditReportHtml(
   dateTo: string,
   responsibleName = "",
   logoUrl = DEFAULT_LOGO_URL,
-  /** Nombres con turno en el cuadrante, por clave YYYY-MM-DD */
-  onDutyByDate: Record<string, string[]> = {}
+  staff: ReportStaffInfo = {}
 ): AuditReportResult {
   const dates = enumerateLocalDates(dateFrom, dateTo || dateFrom);
   if (!dates.length) {
@@ -447,12 +531,16 @@ export function buildDailyAuditReportHtml(
   const sheetParts: string[] = [];
   dates.forEach((dateStr, dateIdx) => {
     const rows = tasksForDailyReport(tasks, logsByTask, dateStr);
-    const onDuty = onDutyByDate[dateStr] ?? [];
     totalTasks += rows.length;
     const materialText = buildMaterialText(rows);
-    const extraNotes = buildExtraAyudantesNote(
-      buildStaffLists(rows, responsibleName, onDuty).ayudantes
+    /** Una sola cabecera por día: se repite igual en las hojas de continuación. */
+    const dayStaff = buildStaffLists(
+      rows,
+      responsibleName,
+      staff.onDutyByDate?.[dateStr] ?? [],
+      staff.directory ?? []
     );
+    const extraNotes = buildExtraStaffNote(dayStaff);
     const dayPages = chunkDayPages(rows);
     dayPages.forEach((pageRows, pageIdx) => {
       const isLastSheet =
@@ -465,7 +553,7 @@ export function buildDailyAuditReportHtml(
         notes += `(continuación — ${formatReportDateShort(dateStr)})`;
       }
       sheetParts.push(
-        sheetHtml(pageRows, dateStr, mat, notes, responsibleName, pageBreak, logoUrl, onDuty)
+        sheetHtml(pageRows, dateStr, mat, notes, dayStaff, pageBreak, logoUrl)
       );
     });
   });

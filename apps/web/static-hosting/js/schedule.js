@@ -108,9 +108,10 @@ export function scheduleSummary(s) {
 
 /**
  * Quién tenía turno cada día, combinando marcas del cuadrante y horarios.
- * marks: { "dateKey|uid": boolean }
+ * Devuelve nombre, rol y tipo, que es lo que la cabecera del informe necesita
+ * para encasillar a cada persona. marks: { "dateKey|uid": boolean }
  */
-export function onDutyNamesByDate(dates, people, marks) {
+export function onDutyStaffByDate(dates, people, marks) {
   const out = {};
   for (const dateKey of dates) {
     out[dateKey] = people
@@ -119,8 +120,12 @@ export function onDutyNamesByDate(dates, people, marks) {
           resolveMark(marks[`${dateKey}|${p.uid}`], plannedState(p.schedule, dateKey))
             .state === "AVAILABLE"
       )
-      .map((p) => String(p.fullName || "").trim())
-      .filter(Boolean);
+      .map((p) => ({
+        fullName: String(p.fullName || "").trim(),
+        role: p.role,
+        userType: p.userType,
+      }))
+      .filter((p) => p.fullName);
   }
   return out;
 }
