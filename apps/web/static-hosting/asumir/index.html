@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Asumir tareas — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    .warn-box { color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:0.5rem 0.65rem;border-radius:6px;font-size:0.85rem;margin:0.5rem 0 0; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-wide stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Asumir tareas</h1>
+      <p class="muted">Tareas pendientes asignadas a otras personas. Puedes asumirlas o marcarlas como hechas (chequeo cruzado) sin asignártelas antes.</p>
+      <p class="small muted" id="versionLine"></p>
+    </div>
+    <p id="err" class="alert" style="display:none"></p>
+    <p id="ok" class="ok" style="display:none"></p>
+    <div id="list" class="stack"></div>
+  </main>
+
+  <div id="doneModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:34rem">
+      <h2 class="h2">Marcar como hecha</h2>
+      <p class="small muted" id="doneSubtitle"></p>
+      <p class="small" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:0.5rem 0.65rem">
+        Queda registrada como <strong>chequeo cruzado</strong>: la tarea no era tuya.
+      </p>
+      <label class="field">Observaciones<textarea id="doneNotes" placeholder="Incidencias, estado del recinto, material usado…"></textarea></label>
+      <label class="field">Falta de material (opcional)<textarea id="doneMaterial" placeholder="Ej. guantes, comida para aves…"></textarea></label>
+      <p id="doneErr" class="alert" style="display:none"></p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" id="btnDoneCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnDoneConfirm">Confirmar como hecha</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      requireAdmin, renderNav, logout, showError, formatTaskWhen, escapeHtml, $,
+    } from "/js/admin.js";
+    import { APP_VERSION } from "/js/version.js";
+    import { subscribePendingTasks, assumeTask, completeTask } from "/js/my-tasks.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("versionLine").textContent = `Versión ${APP_VERSION}`;
+
+    let available = [];
+    let target = null;
+
+    function render() {
+      if (!available.length) {
+        $("list").innerHTML = `<div class="card muted" style="text-align:center;border-style:dashed">
+          No hay tareas de otras personas disponibles para asumir.
+        </div>`;
+        return;
+      }
+      $("list").innerHTML = available
+        .map((t) => {
+          const names = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ");
+          const material = String(t.materialShortage || "").trim();
+          return `<article class="card" data-id="${t.id}">
+            <h2 class="h2" style="margin:0">${escapeHtml(t.title || "")}</h2>
+            <p class="small muted" style="margin:0.2rem 0 0">Programada: ${escapeHtml(formatTaskWhen(t))}</p>
+            ${t.description ? `<p class="small" style="margin:0.5rem 0 0">${escapeHtml(t.description)}</p>` : ""}
+            <p class="small" style="margin:0.35rem 0 0"><strong>Asignada a:</strong> ${escapeHtml(names || "—")}</p>
+            ${material ? `<p class="warn-box"><strong>⚠ Falta de material:</strong> ${escapeHtml(material)}</p>` : ""}
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary btn-sm" data-act="assume">Asumir</button>
+              <button type="button" class="btn btn-secondary btn-sm" data-act="done">Marcar como hecha</button>
+            </div>
+          </article>`;
+        })
+        .join("");
+    }
+
+    subscribePendingTasks(
+      (list) => {
+        available = list.filter((t) => !(t.assignedUserIds || []).includes(profile.uid));
+        render();
+      },
+      (e) => showError($("err"), e.message)
+    );
+
+    $("list").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const id = btn.closest("[data-id]")?.dataset.id;
+      target = available.find((t) => t.id === id) ?? null;
+      if (!target) return;
+      $("ok").style.display = "none";
+      showError($("err"), null);
+
+      if (btn.dataset.act === "done") {
+        $("doneSubtitle").textContent = `«${target.title}»`;
+        $("doneNotes").value = "";
+        $("doneMaterial").value = target.materialShortage || "";
+        showError($("doneErr"), null);
+        $("doneModal").hidden = false;
+        return;
+      }
+
+      if (!confirm(`¿Te asignas «${target.title}»? Pasará a tu lista de tareas por hacer.`)) return;
+      btn.disabled = true;
+      try {
+        await assumeTask(target, profile);
+        $("ok").textContent = "Tarea asumida: ya está en «Mis tareas».";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("err"), ex.message);
+        btn.disabled = false;
+      }
+    });
+
+    $("btnDoneCancel").onclick = () => ($("doneModal").hidden = true);
+
+    $("btnDoneConfirm").onclick = async () => {
+      if (!target) return;
+      const btn = $("btnDoneConfirm");
+      btn.disabled = true;
+      try {
+        await completeTask(target, profile, false, $("doneNotes").value, $("doneMaterial").value);
+        $("doneModal").hidden = true;
+        $("ok").textContent = "Tarea marcada como hecha (chequeo cruzado).";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("doneErr"), ex.message);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>

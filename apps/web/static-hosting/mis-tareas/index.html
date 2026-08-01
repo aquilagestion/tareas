@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mis tareas — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    .sec-title { font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--primary);font-weight:700;margin:1.25rem 0 0.5rem; }
+    .sec-title:first-child { margin-top:0; }
+    .warn-box { color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:0.5rem 0.65rem;border-radius:6px;font-size:0.85rem;margin:0.5rem 0 0; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-wide stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Mis tareas</h1>
+      <p class="muted">Tareas en las que figuras como asignado. Marca como hechas las que completes; el chequeo lo hace el responsable en Revisión.</p>
+      <p class="small muted" id="versionLine"></p>
+    </div>
+    <p id="err" class="alert" style="display:none"></p>
+    <p id="ok" class="ok" style="display:none"></p>
+    <div id="list" class="stack"></div>
+  </main>
+
+  <div id="doneModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:34rem">
+      <h2 class="h2" id="doneTitle">Marcar como hecha</h2>
+      <p class="small muted" id="doneSubtitle"></p>
+      <label class="field">Observaciones<textarea id="doneNotes" placeholder="Incidencias, estado del recinto, material usado…"></textarea></label>
+      <label class="field">Falta de material (opcional)<textarea id="doneMaterial" placeholder="Ej. guantes, comida para aves…"></textarea></label>
+      <p class="small muted" style="margin:0 0 0.75rem">Material y observaciones salen en el informe diario de auditoría.</p>
+      <p id="doneErr" class="alert" style="display:none"></p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" id="btnDoneCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnDoneConfirm">Confirmar como hecha</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="matModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:32rem">
+      <h2 class="h2">Falta de material</h2>
+      <p class="small muted" id="matSubtitle"></p>
+      <label class="field">¿Qué falta?<textarea id="matText" placeholder="Describe qué falta…"></textarea></label>
+      <p id="matErr" class="alert" style="display:none"></p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" id="btnMatCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnMatConfirm">Enviar aviso</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      requireAdmin, renderNav, logout, showError, formatTaskWhen, escapeHtml, $,
+    } from "/js/admin.js";
+    import { APP_VERSION } from "/js/version.js";
+    import {
+      subscribeMyTasks, completeTask, reportMaterial, formatStamp, TASK_STATUS_LABELS,
+    } from "/js/my-tasks.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("versionLine").textContent = `Versión ${APP_VERSION}`;
+
+    let tasks = [];
+    let target = null;
+
+    function cardHtml(t, withActions) {
+      const material = String(t.materialShortage || "").trim();
+      return `<article class="card" data-id="${t.id}">
+        <h2 class="h2" style="margin:0">${escapeHtml(t.title || "")}</h2>
+        <p class="small muted" style="margin:0.2rem 0 0">Programada: ${escapeHtml(formatTaskWhen(t))}</p>
+        ${t.description ? `<p class="small" style="margin:0.5rem 0 0">${escapeHtml(t.description)}</p>` : ""}
+        ${withActions ? "" : `<p class="small" style="margin:0.5rem 0 0"><span class="badge">${escapeHtml(TASK_STATUS_LABELS[t.status] || t.status)}</span></p>`}
+        ${t.completedByName && !withActions ? `<p class="small muted" style="margin:0.35rem 0 0">Realizada por ${escapeHtml(t.completedByName)} · ${escapeHtml(formatStamp(t.completedAt))}</p>` : ""}
+        ${t.completionNotes ? `<p class="small" style="margin:0.35rem 0 0"><strong>Observaciones:</strong> ${escapeHtml(t.completionNotes)}</p>` : ""}
+        ${material ? `<p class="warn-box"><strong>⚠ Falta de material:</strong> ${escapeHtml(material)}</p>` : ""}
+        ${withActions ? `<div class="form-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-act="done">Marcar como hecha</button>
+          <button type="button" class="btn btn-secondary btn-sm" data-act="material">Reportar falta de material</button>
+        </div>` : ""}
+      </article>`;
+    }
+
+    function render() {
+      const byStatus = (s) => tasks.filter((t) => t.status === s);
+      const pending = byStatus("PENDING");
+      const review = byStatus("IN_REVIEW");
+      const done = byStatus("COMPLETED");
+      if (!tasks.length) {
+        $("list").innerHTML = `<div class="card muted" style="text-align:center;border-style:dashed">
+          No tienes tareas asignadas. Puedes tomar tareas de otras personas en «Asumir tareas».
+        </div>`;
+        return;
+      }
+      let html = "";
+      if (pending.length) {
+        html += `<p class="sec-title">Por hacer (${pending.length})</p>`;
+        html += pending.map((t) => cardHtml(t, true)).join("");
+      }
+      if (review.length) {
+        html += `<p class="sec-title">Pendientes de chequeo (${review.length})</p>`;
+        html += review.map((t) => cardHtml(t, false)).join("");
+      }
+      if (done.length) {
+        html += `<p class="sec-title">Chequeadas (${done.length})</p>`;
+        html += done.map((t) => cardHtml(t, false)).join("");
+      }
+      $("list").innerHTML = html;
+    }
+
+    subscribeMyTasks(
+      profile.uid,
+      (list) => {
+        tasks = list;
+        render();
+      },
+      (e) => showError($("err"), e.message)
+    );
+
+    $("list").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const id = btn.closest("[data-id]")?.dataset.id;
+      target = tasks.find((t) => t.id === id) ?? null;
+      if (!target) return;
+      $("ok").style.display = "none";
+      showError($("err"), null);
+      if (btn.dataset.act === "done") {
+        $("doneSubtitle").textContent = `«${target.title}»`;
+        $("doneNotes").value = "";
+        $("doneMaterial").value = target.materialShortage || "";
+        showError($("doneErr"), null);
+        $("doneModal").hidden = false;
+        return;
+      }
+      $("matSubtitle").textContent = `Aviso al responsable sobre «${target.title}».`;
+      $("matText").value = target.materialShortage || "";
+      showError($("matErr"), null);
+      $("matModal").hidden = false;
+    });
+
+    $("btnDoneCancel").onclick = () => ($("doneModal").hidden = true);
+    $("btnMatCancel").onclick = () => ($("matModal").hidden = true);
+
+    $("btnDoneConfirm").onclick = async () => {
+      if (!target) return;
+      const btn = $("btnDoneConfirm");
+      btn.disabled = true;
+      try {
+        await completeTask(target, profile, true, $("doneNotes").value, $("doneMaterial").value);
+        $("doneModal").hidden = true;
+        $("ok").textContent = "Tarea marcada como hecha. Queda pendiente de chequeo.";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("doneErr"), ex.message);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    $("btnMatConfirm").onclick = async () => {
+      if (!target) return;
+      const text = $("matText").value.trim();
+      if (text.length < 3) {
+        showError($("matErr"), "Describe brevemente qué falta.");
+        return;
+      }
+      const btn = $("btnMatConfirm");
+      btn.disabled = true;
+      try {
+        await reportMaterial(target, profile, text);
+        $("matModal").hidden = true;
+        $("ok").textContent = "Aviso de falta de material enviado al responsable.";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("matErr"), ex.message);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>

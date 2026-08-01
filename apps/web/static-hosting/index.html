@@ -8,32 +8,56 @@
 </head>
 <body>
   <div id="nav"></div>
-  <main class="container">
+  <main class="container container-wide">
     <p class="brand">GREFA · Majadahonda</p>
-    <h1 class="h1">Panel de administración</h1>
+    <h1 class="h1" style="font-size:1.75rem">Panel de administración</h1>
     <p class="muted" id="welcome">Cargando…</p>
     <p class="small muted" id="versionLine"></p>
-    <section class="grid grid-2" style="margin-top:2rem">
-      <a class="card" href="/personal/">
-        <h2 class="h2">Gestión de Personal</h2>
-        <p class="small muted">Alta de trabajadores GREFA y voluntarios.</p>
+    <section class="grid grid-4" style="margin-top:1.5rem">
+      <a class="card menu-tile menu-tile-primary" href="/tareas/">
+        <h2 class="h2">Nueva tarea</h2>
+        <p class="muted">Crear y asignar tareas al personal.</p>
       </a>
-      <a class="card" href="/tareas/">
-        <h2 class="h2">Tareas y asignaciones</h2>
-        <p class="small muted">Crear tareas y asignarlas a una o varias personas.</p>
-      </a>
-      <a class="card" href="/revision/">
-        <h2 class="h2">Revisión</h2>
-        <p class="small muted">Chequear tareas marcadas hechas por el personal.</p>
-      </a>
-      <a class="card" href="/auditoria/">
-        <h2 class="h2">Auditoría</h2>
-        <p class="small muted">Histórico de tareas ya chequeadas.</p>
-      </a>
-      <a class="card" href="/calendario/">
+      <a class="card menu-tile" href="/calendario/">
         <h2 class="h2">Calendario</h2>
-        <p class="small muted">Vista semanal y diaria de asignaciones.</p>
+        <p class="muted">Ver tareas programadas.</p>
       </a>
+      <a class="card menu-tile" href="/cuadrante/">
+        <h2 class="h2">Cuadrante</h2>
+        <p class="muted">Marcar turnos, cerrar y publicar la semana.</p>
+      </a>
+      <a class="card menu-tile" href="/personal/">
+        <h2 class="h2">Personal</h2>
+        <p class="muted">Altas, fichas y disponibilidad del equipo.</p>
+      </a>
+      <a class="card menu-tile" href="/mis-tareas/">
+        <h2 class="h2">Mis tareas</h2>
+        <p class="muted">Marcar como hechas las tuyas asignadas.</p>
+      </a>
+      <a class="card menu-tile" href="/asumir/">
+        <h2 class="h2">Asumir tareas</h2>
+        <p class="muted">Tomar o completar tareas de otras personas.</p>
+      </a>
+      <a class="card menu-tile" href="/realizadas/">
+        <h2 class="h2">Tareas realizadas</h2>
+        <p class="muted">Historial de lo que has completado.</p>
+      </a>
+      <a class="card menu-tile" href="/revision/">
+        <h2 class="h2">Revisión</h2>
+        <p class="muted">Chequear tareas realizadas por el personal.</p>
+      </a>
+      <a class="card menu-tile" href="/auditoria/">
+        <h2 class="h2">Auditoría</h2>
+        <p class="muted">Historial de tareas chequeadas.</p>
+      </a>
+      <a class="card menu-tile" href="/mi-ficha/">
+        <h2 class="h2">Mi ficha</h2>
+        <p class="muted">Datos personales y contraseña.</p>
+      </a>
+      <button type="button" class="card menu-tile menu-tile-exit" id="btnExit">
+        <h2 class="h2">Salir</h2>
+        <p class="muted">Cerrar sesión en este equipo.</p>
+      </button>
     </section>
   </main>
   <script type="module">
@@ -42,8 +66,9 @@
     const { profile } = await requireAdmin();
     $("nav").innerHTML = renderNav("home", profile.fullName);
     $("btnLogout").onclick = () => logout();
+    $("btnExit").onclick = () => logout();
     $("welcome").textContent =
-      `Hola, ${profile.fullName}. Desde aquí das de alta personal, creas tareas y las asignas.`;
+      `Hola, ${profile.fullName}. Desde aquí gestionas el personal, las tareas y tu propio trabajo.`;
     $("versionLine").textContent = `Versión web ${APP_VERSION}`;
   </script>
 </body>

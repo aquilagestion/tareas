@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mi ficha — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Mi ficha</h1>
+      <p class="muted">Tus datos personales y tu contraseña. El rol, el tipo de personal y el horario los gestiona la administración desde «Personal».</p>
+      <p class="small muted" id="versionLine"></p>
+    </div>
+
+    <form id="form" class="card stack">
+      <label class="field">Nombre completo<input class="input" id="fullName" required/></label>
+      <div class="grid grid-2">
+        <label class="field">DNI / NIE<input class="input" id="dni" required/></label>
+        <label class="field">Teléfono<input class="input" id="phone" type="tel"/></label>
+      </div>
+      <label class="field">Email de la ficha<input class="input" id="email" type="email"/></label>
+      <div class="grid grid-2">
+        <label class="field">Fecha de comienzo<input class="input" id="startDate" type="date"/></label>
+        <label class="field">Fecha de fin<input class="input" id="endDate" type="date"/></label>
+      </div>
+
+      <p class="small muted" id="roleLine" style="margin:0"></p>
+      <p class="small muted" id="schedLine" style="margin:0"></p>
+
+      <div>
+        <label class="field" style="margin-bottom:0.25rem">Nueva contraseña (opcional)</label>
+        <div class="pwd-row">
+          <input class="input" id="newPassword" type="password" minlength="6" placeholder="Déjalo vacío para no cambiarla"/>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnShowPwd">Mostrar</button>
+        </div>
+        <p class="small muted" style="margin:0.35rem 0 0">Si te pide volver a entrar, cierra sesión y vuelve a acceder antes de cambiarla.</p>
+      </div>
+
+      <p id="err" class="alert" style="display:none"></p>
+      <p id="ok" class="ok" style="display:none"></p>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" id="btnSave">Guardar ficha</button>
+        <button type="button" class="btn btn-secondary" id="btnExit">Cerrar sesión</button>
+      </div>
+    </form>
+  </main>
+
+  <script type="module">
+    import {
+      requireAdmin, renderNav, logout, showError, isValidDni, dateInputValue,
+      parseDateInput, changeOwnPassword, bindPasswordToggle, roleLabel, db, $,
+    } from "/js/admin.js";
+    import { APP_VERSION } from "/js/version.js";
+    import { scheduleSummary } from "/js/schedule.js";
+    import {
+      doc, updateDoc, serverTimestamp,
+    } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("btnExit").onclick = () => logout();
+    $("versionLine").textContent = `Versión ${APP_VERSION}`;
+    bindPasswordToggle("newPassword", "btnShowPwd");
+
+    $("fullName").value = profile.fullName || "";
+    $("dni").value = profile.dni || "";
+    $("phone").value = profile.phone || "";
+    $("email").value = profile.email || "";
+    $("startDate").value = dateInputValue(profile.startDate);
+    $("endDate").value = dateInputValue(profile.endDate);
+    $("roleLine").textContent = `Perfil: ${roleLabel(profile.role, profile.userType)}`;
+    const sched = scheduleSummary(profile.schedule);
+    $("schedLine").textContent = sched ? `Horario previsto: ${sched}` : "Sin horario semanal definido.";
+
+    $("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      showError($("err"), null);
+      $("ok").style.display = "none";
+      const fullName = $("fullName").value.trim();
+      const dni = $("dni").value.trim().toUpperCase();
+      if (!fullName) {
+        showError($("err"), "El nombre es obligatorio.");
+        return;
+      }
+      if (!isValidDni(dni)) {
+        showError($("err"), "DNI/NIE no válido.");
+        return;
+      }
+      const pwd = $("newPassword").value.trim();
+      if (pwd && pwd.length < 6) {
+        showError($("err"), "La contraseña debe tener al menos 6 caracteres.");
+        return;
+      }
+      $("btnSave").disabled = true;
+      try {
+        await updateDoc(doc(db, "users", profile.uid), {
+          fullName,
+          dni,
+          phone: $("phone").value.trim(),
+          email: $("email").value.trim().toLowerCase(),
+          startDate: parseDateInput($("startDate").value),
+          endDate: parseDateInput($("endDate").value),
+          updatedAt: serverTimestamp(),
+        });
+        if (pwd) {
+          await changeOwnPassword(pwd);
+          $("newPassword").value = "";
+        }
+        $("ok").textContent = pwd ? "Ficha y contraseña actualizadas." : "Ficha actualizada.";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        const msg = String(ex?.message || ex);
+        showError(
+          $("err"),
+          /requires-recent-login/i.test(msg)
+            ? "Para cambiar la contraseña, cierra sesión y vuelve a entrar."
+            : msg
+        );
+      } finally {
+        $("btnSave").disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
