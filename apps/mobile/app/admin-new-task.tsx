@@ -11,8 +11,13 @@ import {
 } from "react-native";
 import { onAuthStateChanged } from "firebase/auth";
 import { router } from "expo-router";
-import { getFirebaseAuth, subscribeActiveUsers, subscribeUser } from "@grefa/firebase";
-import type { User } from "@grefa/shared";
+import {
+  getFirebaseAuth,
+  subscribeActiveUsers,
+  subscribeAllTasks,
+  subscribeUser,
+} from "@grefa/firebase";
+import { TASK_STATUS_LABELS, type Task, type User } from "@grefa/shared";
 import {
   createTaskDoc,
   sendGroupedTaskEmails,
@@ -23,11 +28,19 @@ import { formatTaskShareHtml, formatTaskShareText, type TaskShareInput } from ".
 import { shareHtmlAsPdf, shareTextContent } from "../lib/shareExport";
 import { assignableOn, subscribeAvailability, type AvailabilityMap } from "../lib/roster";
 import { ScreenShell } from "../components/ScreenShell";
+import { TaskDetailModal } from "../components/TaskDetailModal";
+import { TaskEditModal } from "../components/TaskEditModal";
 import { TimeField } from "../components/TimeField";
+import { formatScheduled } from "../utils/taskFormat";
 
-export default function AdminNewTaskScreen() {
+export default function AdminTasksScreen() {
+  const [uid, setUid] = useState<string | null>(null);
   const [profile, setProfile] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [detail, setDetail] = useState<Task | null>(null);
+  const [editTask, setEditTask] = useState<Task | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [taskDate, setTaskDate] = useState(todayDateInput());
@@ -57,6 +70,7 @@ export default function AdminNewTaskScreen() {
     let unsubUser = () => {};
     const unsubAuth = onAuthStateChanged(getFirebaseAuth(), (user) => {
       unsubUser();
+      setUid(user?.uid ?? null);
       if (!user) {
         router.replace("/login");
         return;
@@ -73,6 +87,13 @@ export default function AdminNewTaskScreen() {
       u2();
     };
   }, []);
+
+  /** Sin sesión confirmada la consulta de tareas la rechazan las reglas. */
+  useEffect(() => {
+    if (!uid) return;
+    const u = subscribeAllTasks(setTasks, (e) => setError(e.message));
+    return () => u();
+  }, [uid]);
 
   useEffect(() => {
     const key = taskDate.trim();
@@ -102,6 +123,32 @@ export default function AdminNewTaskScreen() {
       else next.add(uid);
       return next;
     });
+  }
+
+  function resetForm() {
+    setTitle("");
+    setDescription("");
+    setTaskDate(todayDateInput());
+    setStartTime("");
+    setEndTime("");
+    setSelected(new Set());
+    setAssignAll(false);
+    setRepeatDaily(false);
+    setRepeatUntil("");
+    setSendNotify(true);
+    setError(null);
+  }
+
+  /** El alta parte siempre en blanco: la pantalla base es el listado. */
+  function openForm() {
+    resetForm();
+    setFormOpen(true);
+  }
+
+  function backToList() {
+    setCreated(null);
+    setFormOpen(false);
+    setError(null);
   }
 
   function buildSharePayload(count = 1): TaskShareInput {
@@ -220,10 +267,61 @@ export default function AdminNewTaskScreen() {
             </Pressable>
           </View>
 
-          <Pressable style={styles.btn} onPress={() => router.replace("/admin")}>
+          <Pressable style={styles.btn} onPress={backToList}>
             <Text style={styles.btnText}>Cerrar</Text>
           </Pressable>
         </ScrollView>
+      </ScreenShell>
+    );
+  }
+
+  if (!formOpen) {
+    return (
+      <ScreenShell>
+        <View style={styles.toolbar}>
+          <Pressable style={styles.newBtn} onPress={openForm}>
+            <Text style={styles.newText}>+ Añadir tarea</Text>
+          </Pressable>
+          <Text style={styles.count}>
+            {tasks.length} {tasks.length === 1 ? "tarea" : "tareas"}
+          </Text>
+        </View>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+          {tasks.length === 0 ? (
+            <Text style={styles.empty}>
+              Todavía no hay tareas. Pulsa «Añadir tarea» para crear la primera.
+            </Text>
+          ) : (
+            tasks.map((t) => (
+              <Pressable key={t.id} style={styles.taskCard} onPress={() => setDetail(t)}>
+                <Text style={styles.taskTitle}>{t.title}</Text>
+                <Text style={styles.taskMeta}>{formatScheduled(t)}</Text>
+                <Text style={styles.taskStatus}>
+                  {TASK_STATUS_LABELS[t.status] ?? t.status}
+                </Text>
+                <Text style={styles.taskMeta} numberOfLines={2}>
+                  Asignada a:{" "}
+                  {(t.assignedUsersInfo ?? []).map((a) => a.fullName).join(", ") || "—"}
+                </Text>
+              </Pressable>
+            ))
+          )}
+        </ScrollView>
+        <TaskDetailModal
+          task={detail}
+          uid={uid}
+          isAdmin={profile?.role === "ADMIN"}
+          onClose={() => setDetail(null)}
+          onEdit={(t) => setEditTask(t)}
+        />
+        <TaskEditModal
+          task={editTask}
+          onClose={() => setEditTask(null)}
+          onSaved={(t) => {
+            if (detail?.id === t.id) setDetail({ ...detail, ...t });
+          }}
+        />
       </ScreenShell>
     );
   }
@@ -329,6 +427,10 @@ export default function AdminNewTaskScreen() {
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Crear y asignar</Text>}
       </Pressable>
 
+      <Pressable style={styles.cancelBtn} onPress={backToList} disabled={busy}>
+        <Text style={styles.cancelText}>Cancelar</Text>
+      </Pressable>
+
       <Text style={styles.shareHint}>
         Podrás enviarla por texto o PDF en cuanto se haya creado.
       </Text>
@@ -340,6 +442,43 @@ export default function AdminNewTaskScreen() {
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { paddingBottom: 40 },
+  toolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+  },
+  newBtn: {
+    backgroundColor: "#2F6B3A",
+    borderRadius: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+  },
+  newText: { color: "#fff", fontWeight: "800" },
+  count: { color: "#78716C", fontSize: 13, fontWeight: "600" },
+  empty: { color: "#78716C", lineHeight: 20, marginTop: 8 },
+  taskCard: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E7E5E4",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+  },
+  taskTitle: { fontSize: 15, fontWeight: "700", color: "#1C1917" },
+  taskMeta: { marginTop: 3, fontSize: 12, color: "#78716C" },
+  taskStatus: { marginTop: 4, fontSize: 12, fontWeight: "700", color: "#2F6B3A" },
+  cancelBtn: {
+    marginTop: 10,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#D6D3D1",
+    backgroundColor: "#fff",
+  },
+  cancelText: { color: "#57534E", fontWeight: "700" },
   label: { fontWeight: "700", marginTop: 10, marginBottom: 4, color: "#44403C" },
   input: {
     backgroundColor: "#fff",

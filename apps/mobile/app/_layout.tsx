@@ -37,7 +37,7 @@ export default function RootLayout() {
             <Stack.Screen name="home" options={{ title: "Menú", headerBackVisible: false }} />
             <Stack.Screen name="admin" options={{ title: "Administración", headerBackVisible: false }} />
             <Stack.Screen name="index" options={{ title: "Mis tareas", ...withMenu }} />
-            <Stack.Screen name="admin-new-task" options={{ title: "Nueva tarea", ...withMenu }} />
+            <Stack.Screen name="admin-new-task" options={{ title: "Información de tareas", ...withMenu }} />
             <Stack.Screen name="admin-revision" options={{ title: "Revisión", ...withMenu }} />
             <Stack.Screen name="admin-audit" options={{ title: "Auditoría", ...withMenu }} />
             <Stack.Screen name="roster" options={{ title: "Cuadrante", ...withMenu }} />

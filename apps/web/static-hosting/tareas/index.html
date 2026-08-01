@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/css/app.css"/>
   <style>
     @media print {
-      .topnav, .tabs, #panel-new, .no-print, .tabs ~ .card:first-of-type { display: none !important; }
+      .topnav, .no-print, #taskModal { display: none !important; }
       #panel-list { display: block !important; }
       body { background: #fff; }
       .print-title { display: block !important; }
@@ -22,18 +22,20 @@
   <div id="nav"></div>
   <main class="container container-full stack">
     <div>
-      <h1 class="h1" style="font-size:1.75rem">Tareas y asignaciones</h1>
-      <p class="muted">Crea tareas con horario y consulta el listado con asignados.</p>
+      <h1 class="h1" style="font-size:1.75rem">Información de tareas</h1>
+      <p class="muted">Listado de tareas con su horario y las personas asignadas.</p>
     </div>
 
-    <div class="tabs no-print">
-      <button type="button" class="tab-btn active" data-tab="new">Nueva tarea</button>
-      <button type="button" class="tab-btn" data-tab="list">Información de tareas</button>
+    <div class="form-actions no-print" style="margin:0">
+      <button type="button" class="btn btn-primary" id="btnNewTask">+ Añadir tarea</button>
+      <span class="small muted">Crea una tarea con horario y avisa a los asignados.</span>
     </div>
+    <p id="taskDone" class="ok no-print" style="display:none"></p>
 
-    <section class="card tab-panel" id="panel-new">
-      <h2 class="h2">Nueva tarea</h2>
-      <form id="taskForm" class="stack" style="margin-top:1rem">
+    <div id="taskModal" class="modal-backdrop" hidden>
+      <div class="modal" style="max-width:46rem">
+        <h2 class="h2">Nueva tarea</h2>
+        <form id="taskForm" class="stack" style="margin-top:1rem">
         <label class="field">Título<input class="input" id="title" required placeholder="Ej. Revisión recinto"/></label>
         <label class="field">Descripción<textarea id="description" placeholder="Detalle de la tarea…"></textarea></label>
         <div class="grid grid-3">
@@ -66,12 +68,15 @@
           <div class="assignee-list" id="assigneeList"><span class="muted small">Cargando…</span></div>
         </div>
         <p id="formErr" class="alert" style="display:none"></p>
-        <p id="formOk" class="ok" style="display:none"></p>
-        <button class="btn btn-primary" id="btnTask" type="submit">Crear y asignar</button>
-      </form>
-    </section>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnTask" type="submit">Crear y asignar</button>
+          <button class="btn btn-secondary" type="button" id="btnCloseTask">Cerrar</button>
+        </div>
+        </form>
+      </div>
+    </div>
 
-    <section class="card tab-panel" id="panel-list" hidden style="padding:0">
+    <section class="card" id="panel-list" style="padding:0">
       <div class="filter-row no-print">
         <label class="field">Desde<input class="input" id="filterFrom" type="date"/></label>
         <label class="field">Hasta<input class="input" id="filterTo" type="date"/></label>
@@ -123,13 +128,23 @@
       watchAvailability();
     });
 
-    document.querySelectorAll(".tab-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        $("panel-new").hidden = btn.dataset.tab !== "new";
-        $("panel-list").hidden = btn.dataset.tab !== "list";
-      });
+    /** La pantalla base es el listado; el alta se abre en blanco al pulsar. */
+    function openTaskForm() {
+      $("taskForm").reset();
+      $("taskDate").value = new Date().toISOString().slice(0, 10);
+      $("repeatUntilWrap").style.display = "none";
+      showError($("formErr"), null);
+      $("taskDone").style.display = "none";
+      $("taskModal").hidden = false;
+      watchAvailability();
+      renderAssigneeList(activeUsersCache);
+      $("title").focus();
+    }
+
+    $("btnNewTask").onclick = openTaskForm;
+    $("btnCloseTask").onclick = () => ($("taskModal").hidden = true);
+    $("taskModal").addEventListener("click", (e) => {
+      if (e.target === $("taskModal")) $("taskModal").hidden = true;
     });
 
     const statusLabel = { PENDING: "Pendiente", IN_REVIEW: "En revisión", COMPLETED: "Completada" };
@@ -268,17 +283,13 @@
       renderTaskTable();
     };
     $("btnPrint").onclick = () => {
-      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-      document.querySelector('[data-tab="list"]').classList.add("active");
-      $("panel-new").hidden = true;
-      $("panel-list").hidden = false;
+      $("taskModal").hidden = true;
       setTimeout(() => window.print(), 150);
     };
 
     $("taskForm").addEventListener("submit", async (e) => {
       e.preventDefault();
       showError($("formErr"), null);
-      $("formOk").style.display = "none";
       let assignees = [...document.querySelectorAll('input[name="assignee"]:checked')].map((el) => ({
         uid: el.value, fullName: el.dataset.name, dni: el.dataset.dni, userType: el.dataset.type,
       }));
@@ -326,17 +337,15 @@
             }
           }
         }
-        $("formOk").textContent =
+        $("taskModal").hidden = true;
+        $("taskDone").textContent =
           idList.length > 1
             ? `${idList.length} tareas creadas (serie diaria).${notifyMsg}`
             : `Tarea creada (${idList[0].slice(0, 8)}…).${notifyMsg}`;
-        $("formOk").style.display = "block";
+        $("taskDone").style.display = "block";
         $("taskForm").reset();
         $("taskDate").value = new Date().toISOString().slice(0, 10);
-        $("repeatDaily").checked = false;
-        $("repeatUntil").value = "";
         $("repeatUntilWrap").style.display = "none";
-        $("assignAll").checked = false;
         watchAvailability();
         renderAssigneeList(activeUsersCache);
       } catch (ex) {
