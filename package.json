@@ -1,7 +1,7 @@
 {
   "name": "grefa-tareas",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.24",
   "description": "Sistema multiplataforma GREFA — tareas, gastos y liquidación (Web + APK + Firebase)",
   "workspaces": [
     "apps/*",
@@ -11,6 +11,9 @@
     "dev:web": "npm run dev -w @grefa/web",
     "dev:mobile": "npm run start -w @grefa/mobile",
     "build:web": "npm run build -w @grefa/web",
+    "web:build": "npm run build -w @grefa/web",
+    "web:sync": "node scripts/sync-web.mjs",
+    "web:deploy": "npm run web:sync && firebase deploy --only hosting --project grefa-tareas",
     "build:apk": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-apk-local.ps1",
     "build:apk:eas": "npm run build:apk:eas -w @grefa/mobile",
     "lint": "npm run lint -w @grefa/web --if-present && npm run lint -w @grefa/shared --if-present",
@@ -18,7 +21,9 @@
     "firebase:deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes --project grefa-tareas",
     "firebase:deploy:functions": "firebase deploy --only functions --project grefa-tareas",
     "firebase:emulators": "firebase emulators:start --project grefa-tareas",
-    "seed:users": "node scripts/seed-admin.js"
+    "seed:users": "node scripts/seed-admin.js",
+    "reset:tasks": "node scripts/reset-tasks.js",
+    "reset:tasks:confirm": "node scripts/reset-tasks.js --confirm"
   },
   "engines": {
     "node": ">=20"

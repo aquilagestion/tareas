@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Auditoría — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    tr.clickable { cursor:pointer; }
+    tr.clickable:hover { background:#f5f5f4; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-full stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Auditoría</h1>
+      <p class="muted">Tareas ya <strong>chequeadas</strong> por el responsable. El informe replica el formulario GREFA en <strong>A4 apaisado</strong> (un día por página).</p>
+      <p class="small muted" id="versionLine"></p>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center">
+      <input class="input" id="filter" style="max-width:22rem;margin:0" placeholder="Filtrar por persona o título…"/>
+      <label class="field" style="margin:0;display:flex;align-items:center;gap:0.5rem;font-size:0.875rem">
+        <span>Informe desde</span>
+        <input class="input" type="date" id="reportFrom" style="width:auto;margin:0;max-width:11rem"/>
+      </label>
+      <label class="field" style="margin:0;display:flex;align-items:center;gap:0.5rem;font-size:0.875rem">
+        <span>hasta</span>
+        <input class="input" type="date" id="reportTo" style="width:auto;margin:0;max-width:11rem"/>
+      </label>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnPrintReport">Imprimir informe</button>
+      <span class="small muted"><strong id="countLogs">0</strong> tareas auditadas</span>
+    </div>
+    <p id="err" class="alert" style="display:none"></p>
+    <section class="card" style="padding:0">
+      <div class="table-wrap">
+        <table class="table table-nowrap" id="auditTable">
+          <thead>
+            <tr>
+              <th>Programada</th><th>Título</th><th>Realizó</th><th>Hora realización</th><th>Chequeada</th><th>Asignados</th>
+            </tr>
+          </thead>
+          <tbody id="body">
+            <tr><td colspan="6" class="muted" style="text-align:center;padding:1.5rem">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="card" id="detailPanel" hidden>
+      <h2 class="h2" id="detailTitle">Detalle</h2>
+      <div id="detailContent"></div>
+    </section>
+  </main>
+  <script type="module">
+    import { requireAdmin, renderNav, logout, showError, formatTaskWhen, escapeHtml, $, db } from "/js/admin.js";
+    import { APP_VERSION } from "/js/version.js";
+    import { printDailyAuditReport } from "/js/audit-daily-report.js";
+    import { onDutyNamesByDate } from "/js/schedule.js";
+    import { enumerateLocalDates } from "/js/date-range.js";
+    import { collection, query, where, orderBy, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("auditoria", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("versionLine").textContent = `Versión ${APP_VERSION}`;
+    const today = new Date().toISOString().slice(0, 10);
+    $("reportFrom").value = today;
+    $("reportTo").value = today;
+
+    let tasks = [];
+    let logsByTask = {};
+    let selectedId = null;
+
+    function formatWhen(ts) {
+      if (!ts?.toDate) return "—";
+      return ts.toDate().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
+    }
+
+    /** Personal con turno cada día del rango: marcas del cuadrante + horarios. */
+    async function loadOnDuty(from, to) {
+      const dates = enumerateLocalDates(from, to || from);
+      if (!dates.length) return {};
+      const [usersSnap, availSnap] = await Promise.all([
+        getDocs(collection(db, "users")),
+        getDocs(
+          query(
+            collection(db, "availability"),
+            where("dateKey", ">=", dates[0]),
+            where("dateKey", "<=", dates[dates.length - 1])
+          )
+        ),
+      ]);
+      const people = usersSnap.docs
+        .map((d) => ({ uid: d.id, ...d.data() }))
+        .filter((u) => u.active !== false);
+      const marks = {};
+      availSnap.forEach((d) => {
+        const x = d.data();
+        if (x.dateKey && x.uid) marks[`${x.dateKey}|${x.uid}`] = x.available === true;
+      });
+      return onDutyNamesByDate(dates, people, marks);
+    }
+
+    async function loadLogs() {
+      const snap = await getDocs(collection(db, "taskLogs"));
+      logsByTask = {};
+      snap.forEach((d) => {
+        const data = d.data();
+        if (!data.taskId) return;
+        const prev = logsByTask[data.taskId];
+        if (!prev || (data.audited && !prev.audited)) {
+          logsByTask[data.taskId] = { id: d.id, ...data };
+        }
+      });
+    }
+
+    function showDetail(task) {
+      selectedId = task.id;
+      const log = logsByTask[task.id];
+      $("detailPanel").hidden = false;
+      $("detailTitle").textContent = task.title || "Tarea";
+      const assigned = (task.assignedUsersInfo || []).map((a) => a.fullName).join(", ");
+      $("detailContent").innerHTML = `
+        <p class="small muted">Programada: ${escapeHtml(formatTaskWhen(task))}</p>
+        <p>${escapeHtml(task.description || "—")}</p>
+        <p class="small"><strong>Asignados:</strong> ${escapeHtml(assigned || "—")}</p>
+        <p class="small"><strong>Realizó:</strong> ${escapeHtml(task.completedByName || log?.completedByName || "—")}
+          · ${escapeHtml(formatWhen(task.completedAt || log?.completionDate))}</p>
+        <p class="small"><strong>Chequeada:</strong> ${escapeHtml(formatWhen(task.auditedAt || log?.auditedAt))}</p>
+        ${log?.wasAssignedToHim === false ? '<p><span class="badge badge-amber">Chequeo cruzado</span></p>' : ""}
+        ${(task.materialShortage || log?.materialShortage) ? `<p class="small" style="color:#92400e"><strong>Falta de material:</strong> ${escapeHtml(task.materialShortage || log?.materialShortage || "")}</p>` : ""}
+        ${(task.completionNotes || log?.comments) ? `<p class="small"><strong>Observaciones:</strong> ${escapeHtml(task.completionNotes || log?.comments || "")}</p>` : ""}
+      `;
+      $("detailPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function render() {
+      const q = ($("filter").value || "").trim().toLowerCase();
+      $("countLogs").textContent = String(tasks.length);
+      const body = $("body");
+      if (!tasks.length) {
+        body.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:1.5rem">Sin tareas auditadas aún</td></tr>`;
+        $("detailPanel").hidden = true;
+        return;
+      }
+      const rows = tasks.filter((t) => {
+        if (!q) return true;
+        const log = logsByTask[t.id];
+        return (t.title || "").toLowerCase().includes(q)
+          || (t.completedByName || log?.completedByName || "").toLowerCase().includes(q)
+          || (t.assignedUsersInfo || []).some((a) => (a.fullName || "").toLowerCase().includes(q));
+      }).map((t) => {
+        const log = logsByTask[t.id];
+        const assigned = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ") || "—";
+        const sel = t.id === selectedId ? ' style="background:#ecfdf5"' : "";
+        return `<tr class="clickable" data-task="${t.id}"${sel}>
+          <td>${escapeHtml(formatTaskWhen(t))}</td>
+          <td><strong>${escapeHtml(t.title || "")}</strong></td>
+          <td>${escapeHtml(t.completedByName || log?.completedByName || "—")}</td>
+          <td>${escapeHtml(formatWhen(t.completedAt || log?.completionDate))}</td>
+          <td>${escapeHtml(formatWhen(t.auditedAt || log?.auditedAt))}</td>
+          <td>${escapeHtml(assigned)}</td>
+        </tr>`;
+      });
+      body.innerHTML = rows.length
+        ? rows.join("")
+        : `<tr><td colspan="6" class="muted" style="text-align:center;padding:1.5rem">Sin coincidencias</td></tr>`;
+    }
+
+    $("filter").addEventListener("input", render);
+
+    $("btnPrintReport").addEventListener("click", () => {
+      const from = $("reportFrom").value;
+      const to = $("reportTo").value || from;
+      if (!from) {
+        showError($("err"), "Elige la fecha inicial del informe.");
+        return;
+      }
+      if (to < from) {
+        showError($("err"), "La fecha final no puede ser anterior a la inicial.");
+        return;
+      }
+      showError($("err"), "");
+      const onDutyByDate = await loadOnDuty(from, to);
+      const result = printDailyAuditReport(
+        tasks,
+        logsByTask,
+        from,
+        to,
+        profile.fullName,
+        onDutyByDate
+      );
+      if (!result.ok) showError($("err"), result.error || "No se pudo generar el informe.");
+    });
+
+    $("body").addEventListener("click", (e) => {
+      const tr = e.target.closest("tr[data-task]");
+      if (!tr) return;
+      const task = tasks.find((t) => t.id === tr.dataset.task);
+      if (task) showDetail(task);
+      render();
+    });
+
+    onSnapshot(
+      query(collection(db, "tasks"), where("status", "==", "COMPLETED"), orderBy("taskDate", "desc")),
+      async (snap) => {
+        await loadLogs();
+        tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        render();
+      },
+      (err) => showError($("err"), err.message)
+    );
+  </script>
+</body>
+</html>

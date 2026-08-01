@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Login — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+</head>
+<body>
+  <main class="container" style="max-width:28rem;min-height:100vh;display:flex;flex-direction:column;justify-content:center">
+    <p class="brand">GREFA · Majadahonda</p>
+    <h1 class="h1" style="font-size:1.5rem">Acceso administradores</h1>
+    <p class="small muted">Email / contraseña (solo rol ADMIN)</p>
+    <form id="loginForm" style="margin-top:2rem;display:grid;gap:1rem">
+      <label class="field">Email
+        <input class="input" id="email" type="email" required autocomplete="username"/>
+      </label>
+      <label class="field">Contraseña
+        <div class="pwd-row">
+          <input class="input" id="password" type="password" required autocomplete="current-password"/>
+          <button type="button" class="btn btn-secondary btn-sm" id="togglePwd">Mostrar</button>
+        </div>
+      </label>
+      <p id="err" class="alert" style="display:none"></p>
+      <p id="ok" class="ok" style="display:none"></p>
+      <button class="btn btn-primary" id="btn" type="submit">Entrar</button>
+      <button type="button" class="btn btn-secondary" id="btnForgot">¿Olvidaste tu contraseña?</button>
+    </form>
+  </main>
+  <script type="module">
+    import { login, requestPasswordReset, showError, bindPasswordToggle, $, onAuthStateChanged, auth, db } from "/js/admin.js";
+    import { getDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    bindPasswordToggle("password", "togglePwd");
+    const params = new URLSearchParams(location.search);
+    if (params.get("err") === "not-admin") {
+      showError($("err"), "Esta cuenta no es administrador activo.");
+    }
+    const next = params.get("next") || "/";
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      const snap = await getDoc(doc(db, "users", user.uid));
+      if (snap.exists() && snap.data().role === "ADMIN" && snap.data().active === true) {
+        location.replace(next.startsWith("/") ? next : "/");
+      }
+    });
+
+    $("btnForgot").addEventListener("click", async () => {
+      showError($("err"), null);
+      $("ok").style.display = "none";
+      const email = $("email").value.trim();
+      if (!email) {
+        showError($("err"), "Escribe tu email arriba y pulsa de nuevo.");
+        return;
+      }
+      $("btnForgot").disabled = true;
+      try {
+        await requestPasswordReset(email);
+        $("ok").textContent =
+          "Te hemos enviado un correo. Asunto: «Ha solicitado cambiar su contraseña de acceso en el gestor de tareas.» Revisa spam.";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("err"), ex.message || "No se pudo enviar el correo");
+      } finally {
+        $("btnForgot").disabled = false;
+      }
+    });
+
+    $("loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      showError($("err"), null);
+      $("ok").style.display = "none";
+      $("btn").disabled = true;
+      $("btn").textContent = "Entrando…";
+      try {
+        await login($("email").value, $("password").value);
+        location.href = next.startsWith("/") ? next : "/";
+      } catch (ex) {
+        showError($("err"), ex.message || "Error de autenticación");
+      } finally {
+        $("btn").disabled = false;
+        $("btn").textContent = "Entrar";
+      }
+    });
+  </script>
+</body>
+</html>

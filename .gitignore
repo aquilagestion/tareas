@@ -14,6 +14,7 @@ ios/
 web-build/
 *.apk
 *.aab
+releases/last_apk_path.txt
 
 # Env / secrets
 .env
@@ -23,6 +24,7 @@ google-services.json
 GoogleService-Info.plist
 serviceAccount*.json
 secrets/
+apps/web/static-hosting/js/notifications-config.js
 
 # Firebase
 .firebase/

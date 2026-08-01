@@ -2,10 +2,13 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 import { logger } from "firebase-functions";
+import { formatTaskWhen } from "../notifications/formatTaskWhen";
+import { notifyUserTasks } from "../notifications/notifyAssignees";
+import type { ScheduleTaskLine } from "../notifications/templates";
 
 /**
  * Recordatorio diario 08:00 Europe/Madrid.
- * Envía FCM a cada usuario con tareas PENDING del día.
+ * FCM + email + WhatsApp a cada usuario con tareas PENDING del día.
  */
 export const dailyTasksReminder = onSchedule(
   {
@@ -27,14 +30,24 @@ export const dailyTasksReminder = onSchedule(
       .where("taskDate", "<", Timestamp.fromDate(end))
       .get();
 
-    const byUser = new Map<string, { title: string }[]>();
+    const byUser = new Map<
+      string,
+      Array<{ title: string; when: string; description?: string }>
+    >();
 
     for (const doc of snap.docs) {
       const data = doc.data();
+      const when = formatTaskWhen(data);
+      const item: ScheduleTaskLine = {
+        title: (data.title as string) ?? "Tarea",
+        when,
+        description: (data.description as string) || undefined,
+        assignedToAll: data.assignedToAll === true,
+      };
       const ids: string[] = data.assignedUserIds ?? [];
       for (const uid of ids) {
         const list = byUser.get(uid) ?? [];
-        list.push({ title: data.title ?? "Tarea" });
+        list.push(item);
         byUser.set(uid, list);
       }
     }
@@ -45,25 +58,35 @@ export const dailyTasksReminder = onSchedule(
     }
 
     const messaging = getMessaging();
-    let sent = 0;
+    let fcmSent = 0;
+    let notifySent = 0;
 
     for (const [uid, tasks] of byUser) {
       const userSnap = await db.collection("users").doc(uid).get();
       const token = userSnap.data()?.fcmToken as string | undefined;
-      if (!token) continue;
+      if (token) {
+        try {
+          const titles = tasks.map((t) => `• ${t.title}`).join("\n");
+          await messaging.send({
+            token,
+            notification: {
+              title: `GREFA · ${tasks.length} tarea(s) hoy`,
+              body: titles.slice(0, 180),
+            },
+            data: { type: "DAILY_TASKS", count: String(tasks.length) },
+          });
+          fcmSent += 1;
+        } catch (e) {
+          logger.warn("FCM falló", uid, e);
+        }
+      }
 
-      const titles = tasks.map((t) => `• ${t.title}`).join("\n");
-      await messaging.send({
-        token,
-        notification: {
-          title: `GREFA · ${tasks.length} tarea(s) hoy`,
-          body: titles.slice(0, 180),
-        },
-        data: { type: "DAILY_TASKS", count: String(tasks.length) },
-      });
-      sent += 1;
+      const r = await notifyUserTasks(db, uid, tasks, "daily");
+      if (r.email?.ok || r.whatsapp?.ok) notifySent += 1;
     }
 
-    logger.info(`Reminder enviado a ${sent} dispositivos (${byUser.size} usuarios con tareas)`);
+    logger.info(
+      `Recordatorio diario: FCM ${fcmSent}, email/WhatsApp ${notifySent}/${byUser.size} usuarios`
+    );
   }
 );

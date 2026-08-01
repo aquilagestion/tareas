@@ -14,6 +14,7 @@
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
+    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@grefa/shared": ["../../packages/shared/src/index.ts"],

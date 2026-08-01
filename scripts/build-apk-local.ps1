@@ -28,9 +28,34 @@ $env:CI = "1"
 $env:NODE_ENV = "production"
 # Evita que Metro tome C:\grefa-tareas como project root en monorepo
 $env:EXPO_NO_METRO_WORKSPACE_ROOT = "1"
+
+# Forzar regenerar native si faltan módulos (gesture-handler, etc.)
+if (Test-Path $androidDir) {
+  Write-Host "     Limpiando android/ para relink nativo..." -ForegroundColor DarkGray
+  # Rutas largas de CMake fallan con Remove-Item; usar cmd rmdir
+  cmd /c "rmdir /s /q `"$androidDir`""
+  if (Test-Path $androidDir) {
+    $empty = Join-Path $env:TEMP ("empty-android-" + [guid]::NewGuid().ToString("n"))
+    New-Item -ItemType Directory -Force -Path $empty | Out-Null
+    cmd /c "robocopy `"$empty`" `"$androidDir`" /MIR /NFL /NDL /NJH /NJS /nc /ns /np >nul"
+    cmd /c "rmdir /s /q `"$androidDir`""
+    Remove-Item -Recurse -Force $empty -ErrorAction SilentlyContinue
+  }
+  if (Test-Path $androidDir) {
+    throw "No se pudo borrar apps/mobile/android (archivos bloqueados). Cierra Gradle/Android Studio y reintenta."
+  }
+}
+
 Push-Location $mobile
 try {
-  npx expo prebuild -p android
+  $expoCli = Join-Path $mobile "node_modules\expo\bin\cli"
+  if (-not (Test-Path $expoCli)) {
+    $expoCli = Join-Path $Root "node_modules\expo\bin\cli"
+  }
+  if (-not (Test-Path $expoCli)) {
+    throw "No se encontró expo CLI (node_modules/expo/bin/cli)"
+  }
+  node $expoCli prebuild -p android
   if ($LASTEXITCODE -ne 0) { throw "expo prebuild falló (exit $LASTEXITCODE)" }
 }
 finally {
@@ -85,4 +110,5 @@ Set-Content -Path $lastPathFile -Value $outputApk -Encoding UTF8
 
 Write-Host "[4/4] Listo:" -ForegroundColor Green
 Write-Host "  $outputApk"
-Write-Host "  (ruta también en $lastPathFile)"
+Write-Host "  APK en releases/ - distribuyela manualmente a los usuarios"
+Write-Host "  (ruta tambien en $lastPathFile)"

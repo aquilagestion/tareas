@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Revisión — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    .stat-row { display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem; }
+    .stat { background:#fff;border:1px solid var(--border);border-radius:8px;padding:0.65rem 1rem; }
+    .done-time { color:#166534;font-weight:600; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-full stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Revisión</h1>
+      <p class="muted">Tareas que el asignado ha marcado como hechas y <strong>pendientes de chequeo</strong> por el responsable.</p>
+      <p class="small muted" id="versionLine"></p>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><strong id="countPending">0</strong> <span class="muted small">pendientes de chequeo</span></div>
+      <div class="stat" id="materialStat" hidden><strong id="countMaterial">0</strong> <span class="muted small">avisos de material</span></div>
+    </div>
+    <p id="materialBanner" class="alert" style="display:none;background:#fffbeb;border-color:#fcd34d;color:#92400e"></p>
+    <p id="err" class="alert" style="display:none"></p>
+    <p id="ok" class="ok" style="display:none"></p>
+    <div id="list" class="stack"></div>
+  </main>
+
+  <div id="editModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:36rem">
+      <h2 class="h2">Editar tarea</h2>
+      <form id="editForm" class="stack">
+        <input type="hidden" id="editTaskId"/>
+        <label class="field">Título<input class="input" id="editTitle" required/></label>
+        <label class="field">Descripción<textarea id="editDescription"></textarea></label>
+        <div class="grid grid-3">
+          <label class="field">Fecha<input class="input" id="editDate" type="date" required/></label>
+          <label class="field">Hora inicio<input class="input" id="editStart" type="time"/></label>
+          <label class="field">Hora fin<input class="input" id="editEnd" type="time"/></label>
+        </div>
+        <label class="field">Compra de materiales / falta de material<textarea id="editMaterial" placeholder="Ej. guantes, comida para aves…"></textarea></label>
+        <label class="field">Observaciones<textarea id="editNotes" placeholder="Incidencias, estado del recinto, material usado…"></textarea></label>
+        <p class="small muted" style="margin:0">Material y observaciones salen en el informe diario de auditoría.</p>
+        <div>
+          <p class="small" style="margin:0 0 0.35rem">Asignados</p>
+          <div class="assignee-list" id="editAssignees"></div>
+        </div>
+        <p id="editErr" class="alert" style="display:none"></p>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="btnCancelEdit">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      requireAdmin, renderNav, logout, showError, formatTaskWhen, escapeHtml, escapeAttr,
+      dateInputValue, updateTask, subscribeActiveUsers, sortPeopleForAssign, roleLabel, $, db,
+    } from "/js/admin.js";
+    import { APP_VERSION } from "/js/version.js";
+    import {
+      collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDocs, deleteDoc, serverTimestamp,
+    } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("revision", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("versionLine").textContent = `Versión ${APP_VERSION}`;
+
+    let logsByTask = {};
+    let tasksCache = [];
+    let activeUsers = [];
+    let materialAlerts = [];
+
+    async function loadMaterialAlerts() {
+      const snap = await getDocs(
+        query(collection(db, "notificationQueue"), where("type", "==", "MATERIAL_SHORTAGE"), where("status", "==", "PENDING"))
+      );
+      materialAlerts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    }
+
+    function renderMaterialBanner() {
+      const withField = tasksCache.filter((t) => (t.materialShortage || "").trim()).length;
+      const total = Math.max(withField, materialAlerts.length);
+      $("countMaterial").textContent = String(total);
+      $("materialStat").hidden = total === 0;
+      if (!total) {
+        $("materialBanner").style.display = "none";
+        return;
+      }
+      const lines = materialAlerts.slice(0, 5).map((a) =>
+        `${escapeHtml(a.taskTitle || "Tarea")}: ${escapeHtml(a.message || "")} (${escapeHtml(a.reportedByName || "")})`
+      );
+      $("materialBanner").innerHTML = `<strong>Faltas de material pendientes (${total}):</strong><br>${lines.join("<br>")}${materialAlerts.length > 5 ? "<br>…" : ""}`;
+      $("materialBanner").style.display = "block";
+    }
+
+    subscribeActiveUsers((users) => { activeUsers = users; }, (err) => showError($("err"), err.message));
+
+    function formatWhen(ts) {
+      if (!ts?.toDate) return "—";
+      return ts.toDate().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
+    }
+
+    async function loadLogs() {
+      const snap = await getDocs(collection(db, "taskLogs"));
+      logsByTask = {};
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.taskId) logsByTask[data.taskId] = { id: d.id, ...data };
+      });
+    }
+
+    function openEdit(taskId) {
+      const t = tasksCache.find((x) => x.id === taskId);
+      if (!t) return;
+      $("editTaskId").value = taskId;
+      $("editTitle").value = t.title || "";
+      $("editDescription").value = t.description || "";
+      $("editDate").value = dateInputValue(t.taskDate);
+      $("editStart").value = t.startTime || "";
+      $("editEnd").value = t.endTime || "";
+      const log = logsByTask[taskId];
+      $("editMaterial").value = t.materialShortage || log?.materialShortage || "";
+      $("editNotes").value = t.completionNotes || log?.comments || "";
+      const selected = new Set((t.assignedUserIds || []));
+      const sorted = sortPeopleForAssign(activeUsers);
+      let html = "";
+      let lastGroup = "";
+      for (const u of sorted) {
+        const group = roleLabel(u.role, u.userType);
+        if (group !== lastGroup) {
+          html += `<div class="assignee-group">${escapeHtml(group)}</div>`;
+          lastGroup = group;
+        }
+        const chk = selected.has(u.uid) ? " checked" : "";
+        html += `<label>
+          <input type="checkbox" name="editAssignee" value="${escapeAttr(u.uid)}"${chk}
+            data-name="${escapeAttr(u.fullName || "")}" data-dni="${escapeAttr(u.dni || "")}"
+            data-type="${escapeAttr(u.userType || "TRABAJADOR_GREFA")}"/>
+          <span>${escapeHtml(u.fullName || "")}</span>
+        </label>`;
+      }
+      $("editAssignees").innerHTML = html || `<span class="muted small">Sin personal activo</span>`;
+      showError($("editErr"), null);
+      $("editModal").hidden = false;
+    }
+
+    $("btnCancelEdit").onclick = () => ($("editModal").hidden = true);
+    $("editModal").addEventListener("click", (e) => {
+      if (e.target === $("editModal")) $("editModal").hidden = true;
+    });
+
+    $("editForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = $("editTaskId").value;
+      const assignees = [...document.querySelectorAll('input[name="editAssignee"]:checked')].map((el) => ({
+        uid: el.value,
+        fullName: el.dataset.name,
+        dni: el.dataset.dni,
+        userType: el.dataset.type,
+      }));
+      if (!assignees.length) {
+        showError($("editErr"), "Selecciona al menos un asignado.");
+        return;
+      }
+      try {
+        await updateTask(id, {
+          title: $("editTitle").value,
+          description: $("editDescription").value,
+          taskDate: $("editDate").value,
+          startTime: $("editStart").value,
+          endTime: $("editEnd").value,
+          materialShortage: $("editMaterial").value,
+          completionNotes: $("editNotes").value,
+        }, assignees);
+        $("editModal").hidden = true;
+        $("ok").textContent = "Tarea actualizada.";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("editErr"), ex.message);
+      }
+    });
+
+    await loadLogs();
+    const q = query(collection(db, "tasks"), where("status", "==", "IN_REVIEW"), orderBy("taskDate", "desc"));
+
+    onSnapshot(q, async (snap) => {
+      await loadLogs();
+      await loadMaterialAlerts();
+      tasksCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      $("countPending").textContent = String(tasksCache.length);
+      renderMaterialBanner();
+      const list = $("list");
+      if (snap.empty) {
+        list.innerHTML = `<div class="card muted" style="text-align:center;border-style:dashed">No hay tareas pendientes de chequeo.</div>`;
+        return;
+      }
+      list.innerHTML = tasksCache.map((t) => {
+        const log = logsByTask[t.id];
+        const names = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ");
+        const doneAt = t.completedAt ? formatWhen(t.completedAt) : (log?.completionDate ? formatWhen(log.completionDate) : "—");
+        const doneBy = t.completedByName || log?.completedByName || "—";
+        return `<article class="card" data-id="${t.id}">
+          <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:flex-start">
+            <div style="flex:1;min-width:14rem">
+              <h2 class="h2" style="margin:0">${escapeHtml(t.title || "")}</h2>
+              <p class="small muted">Programada: ${escapeHtml(formatTaskWhen(t))}</p>
+              <p class="small">${escapeHtml((t.description || "").slice(0, 160))}${(t.description || "").length > 160 ? "…" : ""}</p>
+              <p class="small"><strong>Asignados:</strong> ${escapeHtml(names || "—")}</p>
+              <p class="small done-time">Realizada: ${escapeHtml(doneBy)} · ${escapeHtml(doneAt)}</p>
+              ${log?.wasAssignedToHim === false ? '<p><span class="badge badge-amber">Chequeo cruzado</span></p>' : ""}
+              ${(t.materialShortage || log?.materialShortage) ? `<p class="small" style="color:#92400e;background:#fffbeb;padding:0.5rem;border-radius:6px"><strong>⚠ Falta de material:</strong> ${escapeHtml(t.materialShortage || log?.materialShortage || "")}</p>` : ""}
+              ${(t.completionNotes || log?.comments) ? `<p class="small"><strong>Observaciones:</strong> ${escapeHtml(t.completionNotes || log?.comments || "")}</p>` : ""}
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary btn-sm" data-act="edit">Editar</button>
+              <button type="button" class="btn btn-primary btn-sm" data-act="ok">Chequear</button>
+              <button type="button" class="btn btn-secondary btn-sm" data-act="back">Devolver</button>
+            </div>
+          </div>
+        </article>`;
+      }).join("");
+    }, (err) => showError($("err"), err.message));
+
+    $("list").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const card = btn.closest("[data-id]");
+      const id = card?.dataset.id;
+      if (!id) return;
+      const act = btn.dataset.act;
+      if (act === "edit") {
+        openEdit(id);
+        return;
+      }
+      if (act === "ok" && !confirm("¿Confirmas que has chequeado esta tarea como correctamente realizada?")) return;
+      btn.disabled = true;
+      showError($("err"), null);
+      $("ok").style.display = "none";
+      try {
+        if (act === "ok") {
+          await updateDoc(doc(db, "tasks", id), {
+            status: "COMPLETED",
+            auditedAt: serverTimestamp(),
+            auditedBy: profile.uid,
+          });
+          const log = logsByTask[id];
+          if (log?.id) {
+            await updateDoc(doc(db, "taskLogs", log.id), {
+              audited: true,
+              auditedAt: serverTimestamp(),
+              auditedBy: profile.uid,
+            });
+          }
+          $("ok").textContent = "Tarea chequeada. Aparece en Auditoría.";
+          $("ok").style.display = "block";
+        } else {
+          await updateDoc(doc(db, "tasks", id), {
+            status: "PENDING",
+            completedAt: null,
+            completedBy: null,
+            completedByName: null,
+            completionNotes: null,
+            materialShortage: null,
+            auditedAt: null,
+            auditedBy: null,
+          });
+          const log = logsByTask[id];
+          if (log?.id) await deleteDoc(doc(db, "taskLogs", log.id));
+          $("ok").textContent = "Tarea devuelta al trabajador para volver a realizar.";
+          $("ok").style.display = "block";
+        }
+      } catch (ex) {
+        showError($("err"), ex.message);
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

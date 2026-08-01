@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Personal — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    .sched-box {
+      border: 1px solid #E7E5E4;
+      border-radius: .6rem;
+      padding: .8rem 1rem 1rem;
+      margin: 0;
+    }
+    .day-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .day-chip {
+      padding: .45rem .7rem;
+      border: 1px solid #D6D3D1;
+      border-radius: .5rem;
+      background: #fff;
+      font-weight: 700;
+      font-size: .82rem;
+      cursor: pointer;
+    }
+    .day-chip.on { background: #2F6B3A; border-color: #2F6B3A; color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-full stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Gestión de Personal</h1>
+      <p class="muted">Solo se listan fichas <strong>activas</strong>. Edita fechas de comienzo/fin para prácticas o voluntariado temporal. Los días y horas de cada semana se definen en el <a href="/cuadrante/">cuadrante</a>, pulsando sobre el nombre.</p>
+    </div>
+
+    <section class="card">
+      <h2 class="h2">Nuevo alta</h2>
+      <form id="altaForm" class="stack" style="margin-top:1rem">
+        <div class="grid grid-3">
+          <label class="field">Nombre completo<input class="input" id="fullName" required/></label>
+          <label class="field">DNI / NIE<input class="input" id="dni" required placeholder="12345678Z"/></label>
+          <label class="field">Email (login)<input class="input" id="email" type="email" required/></label>
+          <label class="field">Contraseña inicial
+            <div class="pwd-row">
+              <input class="input" id="password" type="password" required minlength="6"/>
+              <button type="button" class="btn btn-secondary btn-sm" id="togglePwd">Mostrar</button>
+            </div>
+          </label>
+          <label class="field">Teléfono<input class="input" id="phone" type="tel"/></label>
+          <label class="field">Tipo<select id="userType">
+            <option value="TRABAJADOR_GREFA">Trabajador GREFA</option>
+            <option value="VOLUNTARIO">Voluntario</option>
+            <option value="PERSONAL_PRACTICAS">Personal en prácticas</option>
+          </select></label>
+          <label class="field">Rol<select id="role">
+            <option value="WORKER">Trabajador (móvil)</option>
+            <option value="ADMIN">Administrador (web)</option>
+          </select></label>
+          <label class="field">Fecha comienzo<input class="input" id="startDate" type="date"/></label>
+          <label class="field">Fecha fin<input class="input" id="endDate" type="date"/></label>
+        </div>
+        <fieldset class="sched-box" id="altaSchedBox">
+          <legend class="small" style="font-weight:800;color:#2F6B3A">Disponibilidad semanal</legend>
+          <p class="small muted" style="margin:0 0 .5rem">Días que viene y su horario. El cuadrante se rellena solo con estos datos.</p>
+          <div class="day-chips" id="altaSchedDays"></div>
+          <div class="grid grid-3" style="margin-top:.6rem">
+            <label class="field">Hora entrada<input class="input" id="altaSchedStart" type="time"/></label>
+            <label class="field">Hora salida<input class="input" id="altaSchedEnd" type="time"/></label>
+            <label class="field">Disponible desde<input class="input" id="altaSchedFrom" type="date"/></label>
+            <label class="field">Disponible hasta<input class="input" id="altaSchedTo" type="date"/></label>
+          </div>
+          <p class="small" id="altaSchedPreview" style="margin:.4rem 0 0"></p>
+        </fieldset>
+        <p id="formErr" class="alert" style="display:none"></p>
+        <p id="formOk" class="ok" style="display:none"></p>
+        <button class="btn btn-primary" id="btnAlta" type="submit">Dar de alta</button>
+      </form>
+    </section>
+
+    <section class="card" style="padding:0">
+      <div style="padding:1rem 1rem 0;display:flex;flex-wrap:wrap;gap:1rem;align-items:end">
+        <label class="field" style="margin:0;min-width:14rem">Editar inactivo
+          <select class="input" id="pickInactive"><option value="">— Buscar ficha inactiva —</option></select>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-personal" id="usersTable">
+          <thead>
+            <tr>
+              <th>Nombre</th><th>DNI</th><th>Tipo</th><th>Email</th><th>Teléfono</th>
+              <th>Rol</th><th>Horario semanal</th><th>Desde</th><th>Hasta</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="10" class="muted" style="text-align:center;padding:1.5rem">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="editModal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2 class="h2">Editar ficha</h2>
+      <form id="editForm" class="stack" style="margin-top:1rem">
+        <input type="hidden" id="editUid"/>
+        <div class="grid grid-2">
+          <label class="field">Nombre<input class="input" id="editFullName" required/></label>
+          <label class="field">DNI<input class="input" id="editDni" required/></label>
+          <label class="field">Email (ficha)<input class="input" id="editEmail" type="email" required/></label>
+          <label class="field">Teléfono<input class="input" id="editPhone"/></label>
+          <label class="field">Tipo<select id="editUserType">
+            <option value="TRABAJADOR_GREFA">Trabajador GREFA</option>
+            <option value="VOLUNTARIO">Voluntario</option>
+            <option value="PERSONAL_PRACTICAS">Personal en prácticas</option>
+          </select></label>
+          <label class="field">Rol<select id="editRole">
+            <option value="WORKER">Trabajador</option>
+            <option value="ADMIN">Administrador</option>
+          </select></label>
+          <label class="field">Fecha comienzo<input class="input" id="editStartDate" type="date"/></label>
+          <label class="field">Fecha fin<input class="input" id="editEndDate" type="date"/></label>
+          <label class="field">Estado<select id="editActive">
+            <option value="true">Activo</option>
+            <option value="false">Inactivo</option>
+          </select></label>
+          <label class="field">Nueva contraseña (opcional)
+            <div class="pwd-row">
+              <input class="input" id="editPassword" type="password" minlength="6" placeholder="Grefa2026!"/>
+              <button type="button" class="btn btn-secondary btn-sm" id="toggleEditPwd">Mostrar</button>
+            </div>
+          </label>
+        </div>
+        <fieldset class="sched-box" id="editSchedBox">
+          <legend class="small" style="font-weight:800;color:#2F6B3A">Disponibilidad semanal</legend>
+          <div class="day-chips" id="editSchedDays"></div>
+          <div class="grid grid-2" style="margin-top:.6rem">
+            <label class="field">Hora entrada<input class="input" id="editSchedStart" type="time"/></label>
+            <label class="field">Hora salida<input class="input" id="editSchedEnd" type="time"/></label>
+            <label class="field">Disponible desde<input class="input" id="editSchedFrom" type="date"/></label>
+            <label class="field">Disponible hasta<input class="input" id="editSchedTo" type="date"/></label>
+          </div>
+          <p class="small" id="editSchedPreview" style="margin:.4rem 0 0"></p>
+        </fieldset>
+        <p class="small muted">El usuario puede cambiar su contraseña en la app móvil (Mi ficha) o solicitar email de recuperación.</p>
+        <div class="form-actions" style="margin-top:0">
+          <button type="button" class="btn btn-secondary btn-sm" id="btnSendReset">Enviar email recuperación</button>
+        </div>
+        <p id="editErr" class="alert" style="display:none"></p>
+        <p id="editOk" class="ok" style="display:none"></p>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnSaveEdit" type="submit">Guardar</button>
+          <button class="btn btn-secondary" type="button" id="btnCloseEdit">Cerrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      requireAdmin, renderNav, logout, createPersonnel, updatePersonnel, requestPasswordReset,
+      subscribeActiveUsers, subscribeAllUsers, isValidDni, showError,
+      bindPasswordToggle, dateInputValue, DEFAULT_PASSWORD, roleLabel, escapeHtml, escapeAttr, $,
+    } from "/js/admin.js";
+    import {
+      scheduleSummary, USER_TYPE_SHORT, WEEKDAY_SHORT, normalizeSchedule,
+    } from "/js/schedule.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("personal", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("password").value = DEFAULT_PASSWORD;
+    bindPasswordToggle("password", "togglePwd");
+    bindPasswordToggle("editPassword", "toggleEditPwd");
+
+    let allUsers = [];
+
+    /**
+     * Editor de disponibilidad semanal compartido por el alta y la edición.
+     * Los administradores no lo necesitan: se oculta según el rol elegido.
+     */
+    function makeScheduleEditor(prefix, roleSelectId) {
+      let days = [];
+      const box = $(`${prefix}SchedBox`);
+      const daysEl = $(`${prefix}SchedDays`);
+      const startEl = $(`${prefix}SchedStart`);
+      const endEl = $(`${prefix}SchedEnd`);
+      const fromEl = $(`${prefix}SchedFrom`);
+      const toEl = $(`${prefix}SchedTo`);
+      const previewEl = $(`${prefix}SchedPreview`);
+
+      function current() {
+        return normalizeSchedule({
+          weekdays: days,
+          startTime: startEl.value,
+          endTime: endEl.value,
+          fromDate: fromEl.value,
+          toDate: toEl.value,
+        });
+      }
+
+      function renderPreview() {
+        const s = current();
+        previewEl.style.color = s ? "#166534" : "#B45309";
+        previewEl.textContent = s
+          ? `Quedará así: ${scheduleSummary(s)}`
+          : "Sin días marcados no habrá horario y el cuadrante quedará libre para rellenar a mano.";
+      }
+
+      function renderDays() {
+        daysEl.innerHTML = WEEKDAY_SHORT.map(
+          (label, i) =>
+            `<button type="button" class="day-chip ${days.includes(i + 1) ? "on" : ""}" data-day="${i + 1}">${label}</button>`
+        ).join("");
+        for (const b of daysEl.querySelectorAll(".day-chip")) {
+          b.onclick = () => {
+            const n = Number(b.dataset.day);
+            days = days.includes(n) ? days.filter((x) => x !== n) : [...days, n];
+            renderDays();
+            renderPreview();
+          };
+        }
+      }
+
+      function syncVisibility() {
+        box.hidden = $(roleSelectId).value === "ADMIN";
+      }
+
+      function load(schedule) {
+        days = Array.isArray(schedule?.weekdays) ? [...schedule.weekdays] : [];
+        startEl.value = schedule?.startTime || "";
+        endEl.value = schedule?.endTime || "";
+        fromEl.value = schedule?.fromDate || "";
+        toEl.value = schedule?.toDate || "";
+        renderDays();
+        renderPreview();
+        syncVisibility();
+      }
+
+      for (const el of [startEl, endEl, fromEl, toEl]) {
+        el.addEventListener("change", renderPreview);
+      }
+      $(roleSelectId).addEventListener("change", syncVisibility);
+      load(null);
+
+      return {
+        value: () => ($(roleSelectId).value === "ADMIN" ? null : current()),
+        /** Los administradores no necesitan horario, así que no se les avisa. */
+        needsWarning: () => $(roleSelectId).value !== "ADMIN" && !current(),
+        load,
+      };
+    }
+
+    const altaSched = makeScheduleEditor("alta", "role");
+    const editSched = makeScheduleEditor("edit", "editRole");
+
+    subscribeAllUsers((users) => {
+      allUsers = users;
+      const inactive = users.filter((u) => u.active === false);
+      $("pickInactive").innerHTML =
+        `<option value="">— Buscar ficha inactiva —</option>` +
+        inactive
+          .map((u) => `<option value="${escapeAttr(u.uid)}">${escapeHtml(u.fullName)} (${escapeHtml(u.email)})</option>`)
+          .join("");
+    });
+
+    $("pickInactive").addEventListener("change", () => {
+      const uid = $("pickInactive").value;
+      if (!uid) return;
+      const u = allUsers.find((x) => x.uid === uid);
+      if (u) openEdit(u);
+      $("pickInactive").value = "";
+    });
+
+    subscribeActiveUsers(
+      (users) => {
+        const body = $("usersBody");
+        if (!users.length) {
+          body.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:1.5rem">Sin personal activo</td></tr>`;
+          return;
+        }
+        users.sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es"));
+        body.innerHTML = users
+          .map((u) => {
+            const badge =
+              u.userType === "VOLUNTARIO"
+                ? "badge-green"
+                : u.userType === "PERSONAL_PRACTICAS"
+                  ? "badge-amber"
+                  : "badge-blue";
+            const sched = scheduleSummary(u.schedule);
+            return `<tr>
+              <td><strong>${escapeHtml(u.fullName)}</strong></td>
+              <td><code>${escapeHtml(u.dni)}</code></td>
+              <td><span class="badge ${badge}">${escapeHtml(USER_TYPE_SHORT[u.userType] || "Trabajador")}</span></td>
+              <td>${escapeHtml(u.email)}</td>
+              <td>${escapeHtml(u.phone || "—")}</td>
+              <td>${roleLabel(u.role, u.userType)}</td>
+              <td class="small">${sched ? escapeHtml(sched) : '<span class="muted">Sin horario fijo</span>'}</td>
+              <td>${escapeHtml(dateInputValue(u.startDate) || "—")}</td>
+              <td>${escapeHtml(dateInputValue(u.endDate) || "—")}</td>
+              <td><button type="button" class="btn-link" data-edit="${escapeAttr(u.uid)}">Editar</button></td>
+            </tr>`;
+          })
+          .join("");
+      },
+      (err) => {
+        $("usersBody").innerHTML = `<tr><td colspan="10" class="alert">${escapeHtml(err.message)}</td></tr>`;
+      }
+    );
+
+    $("usersBody").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-edit]");
+      if (!btn) return;
+      const u = allUsers.find((x) => x.uid === btn.getAttribute("data-edit"));
+      if (u) openEdit(u);
+    });
+
+    function openEdit(u) {
+      $("editUid").value = u.uid;
+      $("editFullName").value = u.fullName || "";
+      $("editDni").value = u.dni || "";
+      $("editEmail").value = u.email || "";
+      $("editPhone").value = u.phone || "";
+      $("editUserType").value = u.userType || "TRABAJADOR_GREFA";
+      $("editRole").value = u.role || "WORKER";
+      $("editStartDate").value = dateInputValue(u.startDate);
+      $("editEndDate").value = dateInputValue(u.endDate);
+      $("editActive").value = u.active === false ? "false" : "true";
+      $("editPassword").value = "";
+      editSched.load(u.schedule);
+      showError($("editErr"), null);
+      $("editOk").style.display = "none";
+      $("editModal").hidden = false;
+    }
+
+    $("btnCloseEdit").onclick = () => ($("editModal").hidden = true);
+    $("editModal").addEventListener("click", (e) => {
+      if (e.target === $("editModal")) $("editModal").hidden = true;
+    });
+
+    $("editForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      showError($("editErr"), null);
+      $("editOk").style.display = "none";
+      if (!isValidDni($("editDni").value)) {
+        showError($("editErr"), "DNI/NIE no válido.");
+        return;
+      }
+      if (
+        editSched.needsWarning() &&
+        !window.confirm(
+          "No has indicado días de disponibilidad. Sin ellos el cuadrante no se rellenará solo para esta persona. ¿Guardar así?"
+        )
+      ) {
+        return;
+      }
+      $("btnSaveEdit").disabled = true;
+      try {
+        await updatePersonnel($("editUid").value, {
+          schedule: editSched.value(),
+          fullName: $("editFullName").value,
+          dni: $("editDni").value,
+          email: $("editEmail").value,
+          phone: $("editPhone").value,
+          userType: $("editUserType").value,
+          role: $("editRole").value,
+          startDate: $("editStartDate").value,
+          endDate: $("editEndDate").value,
+          active: $("editActive").value,
+          newPassword: $("editPassword").value,
+        });
+        $("editOk").textContent = "Ficha guardada.";
+        $("editOk").style.display = "block";
+        if ($("editActive").value === "false") setTimeout(() => ($("editModal").hidden = true), 800);
+      } catch (ex) {
+        showError($("editErr"), ex.message || "Error al guardar");
+      } finally {
+        $("btnSaveEdit")?.removeAttribute("disabled");
+      }
+    });
+
+    $("btnSendReset").onclick = async () => {
+      showError($("editErr"), null);
+      $("editOk").style.display = "none";
+      const email = $("editEmail").value;
+      $("btnSendReset").disabled = true;
+      try {
+        await requestPasswordReset(email);
+        $("editOk").textContent =
+          `Email enviado a ${email}. Asunto: «Ha solicitado cambiar su contraseña de acceso en el gestor de tareas.»`;
+        $("editOk").style.display = "block";
+      } catch (ex) {
+        showError($("editErr"), ex.message || "No se pudo enviar el email");
+      } finally {
+        $("btnSendReset").disabled = false;
+      }
+    };
+
+    $("altaForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      showError($("formErr"), null);
+      $("formOk").style.display = "none";
+      if (!isValidDni($("dni").value)) {
+        showError($("formErr"), "DNI/NIE no válido.");
+        return;
+      }
+      if (
+        altaSched.needsWarning() &&
+        !window.confirm(
+          "No has indicado días de disponibilidad. Sin ellos el cuadrante no se rellenará solo para esta persona. ¿Dar de alta así?"
+        )
+      ) {
+        return;
+      }
+      $("btnAlta").disabled = true;
+      try {
+        await createPersonnel({
+          schedule: altaSched.value(),
+          email: $("email").value,
+          password: $("password").value || DEFAULT_PASSWORD,
+          fullName: $("fullName").value,
+          dni: $("dni").value,
+          phone: $("phone").value,
+          role: $("role").value,
+          userType: $("userType").value,
+          startDate: $("startDate").value,
+          endDate: $("endDate").value,
+        });
+        $("formOk").textContent = `Alta correcta: ${$("email").value}`;
+        $("formOk").style.display = "block";
+        $("altaForm").reset();
+        $("password").value = DEFAULT_PASSWORD;
+        $("role").value = "WORKER";
+        $("userType").value = "TRABAJADOR_GREFA";
+        altaSched.load(null);
+      } catch (ex) {
+        showError($("formErr"), ex.code === "auth/email-already-in-use" ? "Email ya registrado." : ex.message);
+      } finally {
+        $("btnAlta").disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

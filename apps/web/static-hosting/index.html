@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Panel — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container">
+    <p class="brand">GREFA · Majadahonda</p>
+    <h1 class="h1">Panel de administración</h1>
+    <p class="muted" id="welcome">Cargando…</p>
+    <p class="small muted" id="versionLine"></p>
+    <section class="grid grid-2" style="margin-top:2rem">
+      <a class="card" href="/personal/">
+        <h2 class="h2">Gestión de Personal</h2>
+        <p class="small muted">Alta de trabajadores GREFA y voluntarios.</p>
+      </a>
+      <a class="card" href="/tareas/">
+        <h2 class="h2">Tareas y asignaciones</h2>
+        <p class="small muted">Crear tareas y asignarlas a una o varias personas.</p>
+      </a>
+      <a class="card" href="/revision/">
+        <h2 class="h2">Revisión</h2>
+        <p class="small muted">Chequear tareas marcadas hechas por el personal.</p>
+      </a>
+      <a class="card" href="/auditoria/">
+        <h2 class="h2">Auditoría</h2>
+        <p class="small muted">Histórico de tareas ya chequeadas.</p>
+      </a>
+      <a class="card" href="/calendario/">
+        <h2 class="h2">Calendario</h2>
+        <p class="small muted">Vista semanal y diaria de asignaciones.</p>
+      </a>
+    </section>
+  </main>
+  <script type="module">
+    import { requireAdmin, renderNav, logout, $ } from "/js/admin.js";
+    import { APP_VERSION } from "/js/version.js";
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("home", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("welcome").textContent =
+      `Hola, ${profile.fullName}. Desde aquí das de alta personal, creas tareas y las asignas.`;
+    $("versionLine").textContent = `Versión web ${APP_VERSION}`;
+  </script>
+</body>
+</html>

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Tareas — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    @media print {
+      .topnav, .tabs, #panel-new, .no-print, .tabs ~ .card:first-of-type { display: none !important; }
+      #panel-list { display: block !important; }
+      body { background: #fff; }
+      .print-title { display: block !important; }
+    }
+    .print-title { display: none; font-size: 1.25rem; font-weight: 800; margin-bottom: 0.5rem; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; padding: 1rem; border-bottom: 1px solid var(--border); }
+    .filter-row label { margin: 0; }
+    .filter-row .input { max-width: 11rem; margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-full stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Tareas y asignaciones</h1>
+      <p class="muted">Crea tareas con horario y consulta el listado con asignados.</p>
+    </div>
+
+    <div class="tabs no-print">
+      <button type="button" class="tab-btn active" data-tab="new">Nueva tarea</button>
+      <button type="button" class="tab-btn" data-tab="list">Información de tareas</button>
+    </div>
+
+    <section class="card tab-panel" id="panel-new">
+      <h2 class="h2">Nueva tarea</h2>
+      <form id="taskForm" class="stack" style="margin-top:1rem">
+        <label class="field">Título<input class="input" id="title" required placeholder="Ej. Revisión recinto"/></label>
+        <label class="field">Descripción<textarea id="description" placeholder="Detalle de la tarea…"></textarea></label>
+        <div class="grid grid-3">
+          <label class="field">Fecha<input class="input" id="taskDate" type="date" required/></label>
+          <label class="field">Hora inicio<input class="input" id="startTime" type="time"/></label>
+          <label class="field">Hora fin<input class="input" id="endTime" type="time"/></label>
+        </div>
+        <div class="card" style="padding:1rem;background:#fafaf9;margin:0">
+          <label style="display:flex;gap:0.5rem;align-items:center;font-weight:700;margin-bottom:0.5rem">
+            <input type="checkbox" id="repeatDaily"/>
+            <span>Repetir cada día</span>
+          </label>
+          <label class="field" id="repeatUntilWrap" style="display:none;margin:0">
+            Repetir hasta (inclusive)
+            <input class="input" id="repeatUntil" type="date"/>
+          </label>
+          <p class="small muted" style="margin:0.35rem 0 0">Se creará una tarea por día entre la fecha indicada y «hasta».</p>
+        </div>
+        <div>
+          <p class="small" style="margin:0 0 0.35rem">Asignar a (orden: rol → nombre)</p>
+          <label class="assign-all-row" style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;font-weight:700">
+            <input type="checkbox" id="assignAll"/>
+            <span>Asignar a todo el personal activo</span>
+          </label>
+          <label style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;font-size:0.88rem">
+            <input type="checkbox" id="sendNotify" checked/>
+            <span>Avisar por email a los asignados (Gmail / Apps Script)</span>
+          </label>
+          <p class="small" id="rosterHint" style="margin:0 0 0.35rem;font-weight:700"></p>
+          <div class="assignee-list" id="assigneeList"><span class="muted small">Cargando…</span></div>
+        </div>
+        <p id="formErr" class="alert" style="display:none"></p>
+        <p id="formOk" class="ok" style="display:none"></p>
+        <button class="btn btn-primary" id="btnTask" type="submit">Crear y asignar</button>
+      </form>
+    </section>
+
+    <section class="card tab-panel" id="panel-list" hidden style="padding:0">
+      <div class="filter-row no-print">
+        <label class="field">Desde<input class="input" id="filterFrom" type="date"/></label>
+        <label class="field">Hasta<input class="input" id="filterTo" type="date"/></label>
+        <button type="button" class="btn btn-secondary btn-sm" id="btnClearFilter">Limpiar fechas</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btnPrint">Imprimir / PDF</button>
+        <span class="small muted"><strong id="filterCount">0</strong> tareas</span>
+      </div>
+      <p class="print-title" id="printTitle">GREFA Tareas — Listado</p>
+      <div class="table-wrap">
+        <table class="table table-nowrap" id="tasksTable">
+          <thead>
+            <tr>
+              <th>Título</th><th>Descripción</th><th>Fecha / horario</th><th>Estado</th><th>Asignados</th>
+            </tr>
+          </thead>
+          <tbody id="tasksBody">
+            <tr><td colspan="5" class="muted" style="text-align:center;padding:1.5rem">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script type="module">
+    import {
+      requireAdmin, renderNav, logout, createTask, subscribeActiveUsers, subscribeRecentTasks,
+      showError, sortPeopleForAssign, roleLabel, formatTaskWhen, escapeHtml, escapeAttr, dateInputValue, $, db,
+    } from "/js/admin.js";
+    import {
+      buildGroupedEmailPayload, sendEmailsViaAppsScript, isEmailNotifyConfigured,
+    } from "/js/task-notify.js";
+    import { assignableOn } from "/js/schedule.js";
+    import { collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("tareas", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+    $("taskDate").value = new Date().toISOString().slice(0, 10);
+
+    $("repeatDaily").addEventListener("change", () => {
+      const on = $("repeatDaily").checked;
+      $("repeatUntilWrap").style.display = on ? "block" : "none";
+      if (on && !$("repeatUntil").value) $("repeatUntil").value = $("taskDate").value;
+      renderAssigneeList(activeUsersCache);
+    });
+    $("taskDate").addEventListener("change", () => {
+      if ($("repeatDaily").checked && (!$("repeatUntil").value || $("repeatUntil").value < $("taskDate").value)) {
+        $("repeatUntil").value = $("taskDate").value;
+      }
+      watchAvailability();
+    });
+
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        $("panel-new").hidden = btn.dataset.tab !== "new";
+        $("panel-list").hidden = btn.dataset.tab !== "list";
+      });
+    });
+
+    const statusLabel = { PENDING: "Pendiente", IN_REVIEW: "En revisión", COMPLETED: "Completada" };
+    const statusBadge = { PENDING: "badge-amber", IN_REVIEW: "badge-blue", COMPLETED: "badge-green" };
+
+    let allTasks = [];
+    let activeUsersCache = [];
+    let availability = {};   // "dateKey|uid" -> boolean
+    let unsubAvail = () => {};
+
+    function assignablesFor(users, dateKey) {
+      return assignableOn(users, dateKey, availability);
+    }
+
+    function watchAvailability() {
+      unsubAvail();
+      const dateKey = $("taskDate").value;
+      if (!dateKey) return;
+      unsubAvail = onSnapshot(
+        query(collection(db, "availability"), where("dateKey", "==", dateKey)),
+        (snap) => {
+          availability = {};
+          snap.forEach((d) => {
+            const x = d.data();
+            if (x.dateKey && x.uid) availability[`${x.dateKey}|${x.uid}`] = x.available === true;
+          });
+          renderAssigneeList(activeUsersCache);
+        }
+      );
+    }
+
+    function renderAssigneeList(users) {
+      activeUsersCache = users;
+      const dateKey = $("taskDate").value;
+      const { list: sorted, planned } = assignablesFor(sortPeopleForAssign(users), dateKey);
+      const list = $("assigneeList");
+      const hint = $("rosterHint");
+
+      if (planned) {
+        hint.style.color = "#166534";
+        hint.textContent = `Según el cuadrante, ${sorted.length} disponible(s) el ${dateKey}.`;
+      } else {
+        hint.style.color = "#B45309";
+        hint.textContent = `El ${dateKey || "día elegido"} no tiene a nadie disponible en el cuadrante ni por horario: se muestra todo el personal.`;
+      }
+      if ($("repeatDaily").checked) {
+        hint.textContent += " En series diarias se aplica el cuadrante del primer día.";
+      }
+
+      if (!sorted.length) {
+        list.innerHTML = `<span class="alert">Nadie disponible ese día. Marca disponibilidad en el Cuadrante.</span>`;
+        return;
+      }
+      let html = "";
+      let lastGroup = "";
+      for (const u of sorted) {
+        const group = roleLabel(u.role, u.userType);
+        if (group !== lastGroup) {
+          html += `<div class="assignee-group">${escapeHtml(group)}</div>`;
+          lastGroup = group;
+        }
+        const checked = $("assignAll")?.checked ? " checked" : "";
+        html += `<label>
+          <input type="checkbox" name="assignee" value="${escapeAttr(u.uid)}"${checked}
+            data-name="${escapeAttr(u.fullName || "")}" data-dni="${escapeAttr(u.dni || "")}"
+            data-type="${escapeAttr(u.userType || "TRABAJADOR_GREFA")}"/>
+          <span>${escapeHtml(u.fullName || "")}</span>
+        </label>`;
+      }
+      list.innerHTML = html;
+    }
+
+    subscribeActiveUsers(
+      (users) => renderAssigneeList(users),
+      (err) => { $("assigneeList").innerHTML = `<span class="alert">${escapeHtml(err.message)}</span>`; }
+    );
+
+    watchAvailability();
+
+    $("assignAll").addEventListener("change", () => {
+      const on = $("assignAll").checked;
+      document.querySelectorAll('input[name="assignee"]').forEach((el) => { el.checked = on; });
+    });
+
+    function taskInRange(t) {
+      const from = $("filterFrom").value;
+      const to = $("filterTo").value;
+      if (!from && !to) return true;
+      const key = dateInputValue(t.taskDate);
+      if (!key) return false;
+      if (from && key < from) return false;
+      if (to && key > to) return false;
+      return true;
+    }
+
+    function renderTaskTable() {
+      const tasks = allTasks.filter(taskInRange);
+      $("filterCount").textContent = String(tasks.length);
+      const range = [$("filterFrom").value, $("filterTo").value].filter(Boolean).join(" — ");
+      $("printTitle").textContent = range
+        ? `GREFA Tareas — ${range}`
+        : `GREFA Tareas — Listado (${new Date().toLocaleDateString("es-ES")})`;
+
+      const body = $("tasksBody");
+      if (!tasks.length) {
+        body.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center;padding:1.5rem">Sin tareas en el rango</td></tr>`;
+        return;
+      }
+      body.innerHTML = tasks.map((t) => {
+        const st = t.status || "PENDING";
+        const names = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ") || "—";
+        const desc = (t.description || "").slice(0, 80) + ((t.description || "").length > 80 ? "…" : "");
+        return `<tr>
+          <td><strong>${escapeHtml(t.title || "")}</strong></td>
+          <td title="${escapeAttr(t.description || "")}">${escapeHtml(desc || "—")}</td>
+          <td>${escapeHtml(formatTaskWhen(t))}</td>
+          <td><span class="badge ${statusBadge[st] || ""}">${statusLabel[st] || st}</span></td>
+          <td>${escapeHtml(names)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    subscribeRecentTasks(
+      (tasks) => {
+        allTasks = tasks;
+        renderTaskTable();
+      },
+      (err) => { $("tasksBody").innerHTML = `<tr><td colspan="5" class="alert">${escapeHtml(err.message)}</td></tr>`; }
+    );
+
+    $("filterFrom").addEventListener("change", renderTaskTable);
+    $("filterTo").addEventListener("change", renderTaskTable);
+    $("btnClearFilter").onclick = () => {
+      $("filterFrom").value = "";
+      $("filterTo").value = "";
+      renderTaskTable();
+    };
+    $("btnPrint").onclick = () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelector('[data-tab="list"]').classList.add("active");
+      $("panel-new").hidden = true;
+      $("panel-list").hidden = false;
+      setTimeout(() => window.print(), 150);
+    };
+
+    $("taskForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      showError($("formErr"), null);
+      $("formOk").style.display = "none";
+      let assignees = [...document.querySelectorAll('input[name="assignee"]:checked')].map((el) => ({
+        uid: el.value, fullName: el.dataset.name, dni: el.dataset.dni, userType: el.dataset.type,
+      }));
+      if ($("assignAll").checked && activeUsersCache.length) {
+        const { list } = assignablesFor(sortPeopleForAssign(activeUsersCache), $("taskDate").value);
+        assignees = list.map((u) => ({
+          uid: u.uid,
+          fullName: u.fullName,
+          dni: u.dni,
+          userType: u.userType,
+        }));
+      }
+      $("btnTask").disabled = true;
+      try {
+        const ids = await createTask({
+          title: $("title").value,
+          description: $("description").value,
+          taskDate: $("taskDate").value,
+          startTime: $("startTime").value,
+          endTime: $("endTime").value,
+          repeatDaily: $("repeatDaily").checked,
+          repeatUntil: $("repeatUntil").value,
+          assignees,
+          assignedToAll: $("assignAll").checked,
+          createdBy: profile.uid,
+        });
+        const idList = Array.isArray(ids) ? ids : [ids];
+        let notifyMsg = "";
+        if ($("sendNotify").checked) {
+          if (!isEmailNotifyConfigured()) {
+            notifyMsg =
+              " Email no enviado: configura js/notifications-config.js (Apps Script). Ver scripts/apps-script/";
+          } else {
+            try {
+              const usersMap = new Map(activeUsersCache.map((u) => [u.uid, u]));
+              const uids = assignees.map((a) => a.uid);
+              const notifications = await buildGroupedEmailPayload(uids, usersMap);
+              await sendEmailsViaAppsScript(notifications, {
+                email: profile.email,
+                fullName: profile.fullName,
+              });
+              notifyMsg = ` Emails agrupados enviados a ${notifications.length} trabajador(es).`;
+            } catch (exN) {
+              notifyMsg = ` Email no enviado: ${exN.message}`;
+            }
+          }
+        }
+        $("formOk").textContent =
+          idList.length > 1
+            ? `${idList.length} tareas creadas (serie diaria).${notifyMsg}`
+            : `Tarea creada (${idList[0].slice(0, 8)}…).${notifyMsg}`;
+        $("formOk").style.display = "block";
+        $("taskForm").reset();
+        $("taskDate").value = new Date().toISOString().slice(0, 10);
+        $("repeatDaily").checked = false;
+        $("repeatUntil").value = "";
+        $("repeatUntilWrap").style.display = "none";
+        $("assignAll").checked = false;
+        watchAvailability();
+        renderAssigneeList(activeUsersCache);
+      } catch (ex) {
+        showError($("formErr"), ex.message);
+      } finally {
+        $("btnTask").disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

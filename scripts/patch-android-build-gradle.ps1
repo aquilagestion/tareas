@@ -30,5 +30,7 @@ if ($text -match $pattern) {
   throw "No se pudo localizar el bloque react {} en $AppGradlePath para parchear"
 }
 
-Set-Content -Path $AppGradlePath -Value $text -Encoding UTF8
+# UTF-8 sin BOM (PowerShell 5 Set-Content -Encoding UTF8 escribe BOM → Gradle falla con '?')
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($AppGradlePath, $text.TrimStart([char]0xFEFF), $utf8NoBom)
 Write-Host "Patched $AppGradlePath"

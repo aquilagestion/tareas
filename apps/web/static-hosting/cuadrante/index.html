@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Cuadrante — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    .roster { border-collapse: collapse; width: 100%; }
+    .roster th, .roster td {
+      border: 1px solid #E7E5E4;
+      padding: 6px 8px;
+      text-align: center;
+      font-size: .85rem;
+    }
+    .roster th { background: #F5F1E8; color: #2F6B3A; font-weight: 800; }
+    .roster th.today { border: 2px solid #2F6B3A; }
+    .roster td.name, .roster th.name { text-align: left; min-width: 210px; }
+    .roster td.name { cursor: pointer; }
+    .roster td.name:hover { background: #F5F1E8; }
+    .roster td.cell { cursor: pointer; user-select: none; min-width: 84px; }
+    .roster td.cell:hover { outline: 2px solid #2F6B3A; }
+    .roster td.ok { background: #D1FAE5; }
+    .roster td.off { background: #FEE2E2; }
+    .roster td.ok-auto { background: #F0FDF4; }
+    .roster td.off-auto { background: #FEF9F9; }
+    .roster .mark { font-weight: 800; }
+    .roster .auto .mark { font-weight: 600; color: #A8A29E; }
+    .roster .ntasks { display: block; font-size: .7rem; color: #78716C; }
+    .roster tr.totals td { background: #F5F1E8; font-weight: 800; }
+    .role { display: block; font-size: .72rem; color: #78716C; font-weight: 400; }
+    .sched { display: block; font-size: .68rem; color: #A8A29E; font-weight: 400; }
+    .day-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .day-chip {
+      padding: .45rem .7rem;
+      border: 1px solid #D6D3D1;
+      border-radius: .5rem;
+      background: #fff;
+      font-weight: 700;
+      font-size: .82rem;
+      cursor: pointer;
+    }
+    .day-chip.on { background: #2F6B3A; border-color: #2F6B3A; color: #fff; }
+    .print-week { display: none; }
+
+    @media print {
+      .topnav, .cal-toolbar, #intro, #msg, #frozen, #legend, .modal-backdrop { display: none !important; }
+      body { background: #fff; }
+      .print-week { display: block; font-weight: 700; margin: 0 0 .6rem; }
+      .roster td.cell:hover { outline: none; }
+      .roster { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-full stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Cuadrante semanal</h1>
+      <p class="muted" id="intro">Con qué personal se cuenta cada día. Haz clic en una casilla para cambiar la marca y en el nombre para editar su horario.</p>
+      <p class="print-week" id="printWeek"></p>
+    </div>
+
+    <div class="cal-toolbar">
+      <button type="button" class="btn btn-secondary btn-sm" id="btnPrev">← Anterior</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnToday">Esta semana</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnNext">Siguiente →</button>
+      <button type="button" class="btn btn-sm" id="btnCopy">Copiar semana anterior</button>
+      <button type="button" class="btn btn-sm" id="btnClose" style="background:#B45309">Cerrar cuadrante</button>
+      <button type="button" class="btn btn-sm" id="btnMail">Enviar por email</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnPrint">Imprimir o PDF</button>
+      <select id="savedPicker" style="max-width:20rem">
+        <option value="">— Cuadrantes guardados —</option>
+      </select>
+      <strong id="weekLabel" class="small"></strong>
+    </div>
+
+    <p id="msg" class="small" style="color:#B91C1C"></p>
+    <p id="frozen" class="small" style="color:#1D4ED8;font-weight:700"></p>
+    <div id="grid"></div>
+    <p class="small muted" id="legend">
+      Las marcas en tono claro las pone el horario de cada persona; las de color intenso las has
+      puesto tú y mandan sobre el horario. Quien tenga un periodo de voluntariado o prácticas ya
+      terminado no aparece en el cuadrante de esas semanas.
+    </p>
+  </main>
+
+  <div id="schedModal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2 class="h2" id="schedTitle">Horario</h2>
+      <p class="small muted" id="schedWho"></p>
+      <form id="schedForm" class="stack" style="margin-top:1rem">
+        <input type="hidden" id="schedUid"/>
+        <label class="field">Días que viene
+          <div class="day-chips" id="schedDays"></div>
+        </label>
+        <div class="grid grid-2">
+          <label class="field">Hora entrada<input class="input" id="schedStart" type="time"/></label>
+          <label class="field">Hora salida<input class="input" id="schedEnd" type="time"/></label>
+          <label class="field">Desde<input class="input" id="schedFrom" type="date"/></label>
+          <label class="field">Hasta<input class="input" id="schedTo" type="date"/></label>
+        </div>
+        <p class="small muted" id="schedPreview"></p>
+        <p id="schedErr" class="alert" style="display:none"></p>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnSchedSave" type="submit">Guardar horario</button>
+          <button class="btn btn-secondary" type="button" id="btnSchedClear">Quitar horario fijo</button>
+          <button class="btn btn-secondary" type="button" id="btnSchedClose">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    import { requireAdmin, renderNav, logout, escapeHtml, escapeAttr, sortPeopleForAssign, $, db } from "/js/admin.js";
+    import {
+      WEEKDAY_SHORT, WEEKDAY_LONG, USER_TYPE_SHORT,
+      plannedState, resolveMark, nextMark, contradictsSchedule,
+      inRosterWeek, scheduleSummary, scheduleHours, normalizeSchedule,
+    } from "/js/schedule.js";
+    import { sendRosterEmails } from "/js/task-notify.js";
+    import {
+      collection, query, where, onSnapshot, doc, setDoc, deleteDoc, updateDoc,
+      serverTimestamp, writeBatch, orderBy, limit,
+    } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("cuadrante", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+
+    let allStaff = [];
+    let tasks = [];
+    let map = {};        // "dateKey|uid" -> boolean (marca manual)
+    let prevMap = {};
+    let anchor = mondayOf(new Date());
+    let unsubWeek = () => {};
+    let unsubPrev = () => {};
+    let schedDays = [];
+    let savedRosters = [];
+    let viewing = null;   // copia congelada que se está consultando
+
+    function localKey(d) {
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${m}-${day}`;
+    }
+
+    function mondayOf(d) {
+      const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const day = x.getDay();
+      x.setDate(x.getDate() + (day === 0 ? -6 : 1 - day));
+      return x;
+    }
+
+    function weekKeys(from) {
+      const mon = mondayOf(from);
+      const out = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(mon);
+        d.setDate(mon.getDate() + i);
+        out.push(localKey(d));
+      }
+      return out;
+    }
+
+    function shiftWeek(d, weeks) {
+      const x = new Date(d);
+      x.setDate(x.getDate() + weeks * 7);
+      return x;
+    }
+
+    function cellKey(dateKey, uid) {
+      return `${dateKey}|${uid}`;
+    }
+
+    function markFor(dateKey, u) {
+      return resolveMark(map[cellKey(dateKey, u.uid)], plannedState(u.schedule, dateKey));
+    }
+
+    function visibleStaff() {
+      return allStaff.filter((u) => inRosterWeek(u.schedule, weekKeys(anchor)));
+    }
+
+    function taskDayKey(t) {
+      const ts = t.taskDate;
+      if (!ts?.toDate) return "";
+      return localKey(ts.toDate());
+    }
+
+    function tasksFor(dateKey, uid) {
+      return tasks.filter(
+        (t) => taskDayKey(t) === dateKey && (t.assignedUserIds || []).includes(uid)
+      ).length;
+    }
+
+    function roleText(u) {
+      if (u.role === "ADMIN") return "Responsable";
+      return USER_TYPE_SHORT[u.userType] || "Trabajador";
+    }
+
+    function weekLabelText() {
+      return `Semana del ${mondayOf(anchor).toLocaleDateString("es-ES")}`;
+    }
+
+    function setMsg(text, ok) {
+      const el = $("msg");
+      el.textContent = text || "";
+      el.style.color = ok ? "#166534" : "#B91C1C";
+    }
+
+    function watchWeek() {
+      unsubWeek();
+      unsubPrev();
+      const keys = weekKeys(anchor);
+      const prevKeys = weekKeys(shiftWeek(anchor, -1));
+
+      unsubWeek = onSnapshot(
+        query(collection(db, "availability"), where("dateKey", "in", keys)),
+        (snap) => {
+          map = {};
+          snap.forEach((d) => {
+            const x = d.data();
+            if (x.dateKey && x.uid) map[cellKey(x.dateKey, x.uid)] = x.available === true;
+          });
+          render();
+        },
+        (e) => setMsg(e.message)
+      );
+
+      unsubPrev = onSnapshot(
+        query(collection(db, "availability"), where("dateKey", "in", prevKeys)),
+        (snap) => {
+          prevMap = {};
+          snap.forEach((d) => {
+            const x = d.data();
+            if (x.dateKey && x.uid) prevMap[cellKey(x.dateKey, x.uid)] = x.available === true;
+          });
+        }
+      );
+    }
+
+    /** Si la marca elegida coincide con el horario se borra, y la casilla vuelve a seguirlo. */
+    async function applyMark(dateKey, u, target) {
+      const planned = plannedState(u.schedule, dateKey);
+      const matches =
+        (planned === "AVAILABLE" && target === "AVAILABLE") ||
+        ((planned === "OFF" || planned === "OUT_OF_RANGE") && target === "OFF");
+      const ref = doc(db, "availability", `${dateKey}_${u.uid}`);
+      if (target === "UNSET" || matches) {
+        await deleteDoc(ref);
+        return;
+      }
+      await setDoc(ref, {
+        uid: u.uid,
+        dateKey,
+        available: target === "AVAILABLE",
+        updatedBy: profile.uid,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    async function toggleCell(dateKey, uid) {
+      setMsg("");
+      const u = allStaff.find((x) => x.uid === uid);
+      if (!u) return;
+      const planned = plannedState(u.schedule, dateKey);
+      const target = nextMark(markFor(dateKey, u).state, planned);
+
+      if (contradictsSchedule(target, planned)) {
+        const dayName = WEEKDAY_LONG[weekKeys(anchor).indexOf(dateKey)] || "ese día";
+        const reason =
+          planned === "OUT_OF_RANGE"
+            ? `Esa fecha queda fuera de su periodo (${scheduleSummary(u.schedule)}).`
+            : `Según su horario no viene los ${dayName} (${scheduleSummary(u.schedule)}).`;
+        const ok = window.confirm(
+          `${u.fullName} no está disponible ese día.\n\n${reason}\n\n¿Aun así quieres añadirlo al cuadrante?`
+        );
+        if (!ok) return;
+      }
+
+      try {
+        await applyMark(dateKey, u, target);
+      } catch (e) {
+        setMsg(e.message || "No se pudo guardar");
+      }
+    }
+
+    async function copyPrevious() {
+      setMsg("");
+      const keys = weekKeys(anchor);
+      const prevKeys = weekKeys(shiftWeek(anchor, -1));
+      const batch = writeBatch(db);
+      let n = 0;
+      prevKeys.forEach((fromKey, i) => {
+        const toKey = keys[i];
+        for (const u of visibleStaff()) {
+          const v = prevMap[cellKey(fromKey, u.uid)];
+          if (v === undefined) continue;
+          batch.set(doc(db, "availability", `${toKey}_${u.uid}`), {
+            uid: u.uid,
+            dateKey: toKey,
+            available: v,
+            updatedBy: profile.uid,
+            updatedAt: serverTimestamp(),
+          });
+          n += 1;
+        }
+      });
+      if (!n) {
+        setMsg("La semana anterior no tiene ninguna marca manual que copiar.");
+        return;
+      }
+      try {
+        await batch.commit();
+      } catch (e) {
+        setMsg(e.message || "No se pudo copiar");
+      }
+    }
+
+    function dayLabelsOf(keys) {
+      return keys.map((k, i) => {
+        const [, m, d] = k.split("-");
+        return `${WEEKDAY_SHORT[i]} ${Number(d)}/${Number(m)}`;
+      });
+    }
+
+    function buildRows(keys, staff) {
+      return staff.map((u) => ({
+        uid: u.uid,
+        name: u.fullName || "",
+        role: roleText(u),
+        hours: scheduleHours(u.schedule),
+        marks: keys.map((k) => {
+          const st = markFor(k, u).state;
+          return st === "AVAILABLE" ? "SI" : st === "OFF" ? "NO" : "";
+        }),
+      }));
+    }
+
+    function closedAtText(snapshot) {
+      const raw = snapshot?.closedAt;
+      const d = raw?.toDate ? raw.toDate() : null;
+      return d ? d.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" }) : "";
+    }
+
+    /** Congela la semana en el histórico; el cuadrante vivo se sigue pudiendo editar. */
+    async function closeWeek() {
+      setMsg("");
+      const keys = weekKeys(anchor);
+      const weekStart = keys[0];
+      const already = savedRosters.find((r) => r.weekStart === weekStart);
+      const question = already
+        ? `Este cuadrante ya se cerró el ${closedAtText(already)}. ¿Guardar de nuevo con el estado actual?`
+        : `Se guardará una copia del cuadrante de esta semana en el histórico. Podrás seguir editándolo, pero la copia no cambiará. ¿Cerrar?`;
+      if (!window.confirm(question)) return;
+
+      $("btnClose").disabled = true;
+      try {
+        await setDoc(doc(db, "rosters", weekStart), {
+          weekStart,
+          weekLabel: weekLabelText(),
+          days: keys,
+          dayLabels: dayLabelsOf(keys),
+          rows: buildRows(keys, visibleStaff()),
+          closedBy: profile.uid,
+          closedByName: profile.fullName || "",
+          closedAt: serverTimestamp(),
+        });
+        setMsg(`Cuadrante de la ${weekLabelText().toLowerCase()} guardado en el histórico.`, true);
+      } catch (e) {
+        setMsg(e.message || "No se pudo cerrar el cuadrante");
+      } finally {
+        $("btnClose").disabled = false;
+      }
+    }
+
+    async function sendByEmail() {
+      setMsg("");
+      const keys = weekKeys(anchor);
+      const staff = visibleStaff();
+      const rows = buildRows(keys, staff);
+      const recipients = staff
+        .filter((u) => String(u.email || "").trim())
+        .map((u) => {
+          const hours = scheduleHours(u.schedule);
+          const shifts = keys
+            .map((k, i) => {
+              if (markFor(k, u).state !== "AVAILABLE") return null;
+              const [, m, d] = k.split("-");
+              const base = `${WEEKDAY_LONG[i]} ${Number(d)}/${Number(m)}`;
+              return hours ? `${base} · ${hours}` : base;
+            })
+            .filter(Boolean);
+          return { uid: u.uid, email: u.email.trim(), fullName: u.fullName || "", shifts };
+        })
+        .filter((r) => r.shifts.length);
+
+      if (!recipients.length) {
+        setMsg("Nadie tiene turnos marcados esta semana.");
+        return;
+      }
+      if (!window.confirm(`Enviar el cuadrante a ${recipients.length} persona(s) con turno esta semana?`)) {
+        return;
+      }
+
+      $("btnMail").disabled = true;
+      try {
+        const res = await sendRosterEmails(
+          { weekLabel: weekLabelText(), days: dayLabelsOf(keys), rows, recipients },
+          { email: profile.email, fullName: profile.fullName }
+        );
+        setMsg(
+          res.verified
+            ? `Cuadrante enviado a ${res.sent} persona(s).`
+            : `Cuadrante enviado a ${recipients.length} persona(s) (envío no confirmado por el navegador).`,
+          true
+        );
+      } catch (e) {
+        setMsg(e.message || "No se pudo enviar el cuadrante");
+      } finally {
+        $("btnMail").disabled = false;
+      }
+    }
+
+    function renderSchedDays() {
+      $("schedDays").innerHTML = WEEKDAY_SHORT.map(
+        (label, i) =>
+          `<button type="button" class="day-chip ${schedDays.includes(i + 1) ? "on" : ""}" data-day="${i + 1}">${label}</button>`
+      ).join("");
+      for (const b of document.querySelectorAll("#schedDays .day-chip")) {
+        b.onclick = () => {
+          const n = Number(b.dataset.day);
+          schedDays = schedDays.includes(n) ? schedDays.filter((x) => x !== n) : [...schedDays, n];
+          renderSchedDays();
+          renderSchedPreview();
+        };
+      }
+    }
+
+    function currentSchedInput() {
+      return {
+        weekdays: schedDays,
+        startTime: $("schedStart").value,
+        endTime: $("schedEnd").value,
+        fromDate: $("schedFrom").value,
+        toDate: $("schedTo").value,
+      };
+    }
+
+    function renderSchedPreview() {
+      const s = normalizeSchedule(currentSchedInput());
+      $("schedPreview").textContent = s
+        ? `Quedará así: ${scheduleSummary(s)}`
+        : "Sin días marcados no hay horario: el cuadrante queda libre para rellenar a mano.";
+    }
+
+    function openSchedule(u) {
+      $("schedUid").value = u.uid;
+      $("schedTitle").textContent = `Horario de ${u.fullName}`;
+      $("schedWho").textContent = `${roleText(u)} · ${u.email || "sin email"}`;
+      schedDays = Array.isArray(u.schedule?.weekdays) ? [...u.schedule.weekdays] : [];
+      $("schedStart").value = u.schedule?.startTime || "";
+      $("schedEnd").value = u.schedule?.endTime || "";
+      $("schedFrom").value = u.schedule?.fromDate || "";
+      $("schedTo").value = u.schedule?.toDate || "";
+      $("schedErr").style.display = "none";
+      renderSchedDays();
+      renderSchedPreview();
+      $("schedModal").hidden = false;
+    }
+
+    async function saveSchedule(clear) {
+      const uid = $("schedUid").value;
+      if (!uid) return;
+      $("btnSchedSave").disabled = true;
+      try {
+        const next = clear ? null : normalizeSchedule(currentSchedInput());
+        await updateDoc(doc(db, "users", uid), { schedule: next, updatedAt: serverTimestamp() });
+        $("schedModal").hidden = true;
+      } catch (e) {
+        $("schedErr").textContent = e.message || "No se pudo guardar el horario";
+        $("schedErr").style.display = "block";
+      } finally {
+        $("btnSchedSave").disabled = false;
+      }
+    }
+
+    function renderSavedPicker() {
+      const current = viewing ? viewing.weekStart : "";
+      $("savedPicker").innerHTML =
+        `<option value="">— Cuadrante actual —</option>` +
+        savedRosters
+          .map(
+            (r) =>
+              `<option value="${escapeAttr(r.weekStart)}"${r.weekStart === current ? " selected" : ""}>${escapeHtml(r.weekLabel)} (cerrado ${escapeHtml(closedAtText(r))})</option>`
+          )
+          .join("");
+    }
+
+    /** Tabla de solo lectura de una copia guardada. */
+    function renderFrozen() {
+      const weekText = viewing.weekLabel || "Cuadrante guardado";
+      $("weekLabel").textContent = weekText;
+      $("printWeek").textContent = weekText;
+      $("frozen").textContent =
+        `Copia guardada el ${closedAtText(viewing)} por ${viewing.closedByName || "—"}. No se puede editar: elige «Cuadrante actual» para volver.`;
+
+      const labels = viewing.dayLabels || [];
+      const rows = viewing.rows || [];
+      let html = `<table class="roster"><thead><tr><th class="name">Personal</th>`;
+      html += labels.map((l) => `<th>${escapeHtml(l)}</th>`).join("");
+      html += `</tr></thead><tbody>`;
+      for (const r of rows) {
+        const extra = [r.role, r.hours].filter(Boolean).join(" · ");
+        html += `<tr><td class="name">${escapeHtml(r.name)}${extra ? `<span class="role">${escapeHtml(extra)}</span>` : ""}</td>`;
+        html += (r.marks || [])
+          .map((m) => {
+            const cls = m === "SI" ? "ok" : m === "NO" ? "off" : "";
+            const text = m === "SI" ? "Sí" : m === "NO" ? "No" : "·";
+            return `<td class="${cls}"><span class="mark">${text}</span></td>`;
+          })
+          .join("");
+        html += `</tr>`;
+      }
+      html += `<tr class="totals"><td class="name">Disponibles</td>`;
+      html += labels
+        .map((_, i) => {
+          const n = rows.filter((r) => (r.marks || [])[i] === "SI").length;
+          return `<td>${n} de ${rows.length}</td>`;
+        })
+        .join("");
+      html += `</tr></tbody></table>`;
+      $("grid").innerHTML = html;
+    }
+
+    function render() {
+      renderSavedPicker();
+      if (viewing) {
+        renderFrozen();
+        return;
+      }
+      const keys = weekKeys(anchor);
+      const weekText = weekLabelText();
+      const already = savedRosters.find((r) => r.weekStart === keys[0]);
+      $("frozen").textContent = already
+        ? `Cerrado el ${closedAtText(already)}. Lo que cambies ahora no afecta a la copia guardada.`
+        : "";
+      $("frozen").style.color = already ? "#B45309" : "#1D4ED8";
+      $("weekLabel").textContent = weekText;
+      $("printWeek").textContent = weekText;
+      const todayKey = localKey(new Date());
+      const staff = visibleStaff();
+
+      let html = `<table class="roster"><thead><tr><th class="name">Personal</th>`;
+      keys.forEach((k, i) => {
+        html += `<th class="${k === todayKey ? "today" : ""}">${WEEKDAY_SHORT[i]}<br/><span class="small">${k.slice(8)}/${k.slice(5, 7)}</span></th>`;
+      });
+      html += `</tr></thead><tbody>`;
+
+      for (const u of staff) {
+        const summary = scheduleSummary(u.schedule);
+        html += `<tr><td class="name" data-sched="${escapeAttr(u.uid)}">
+          ${escapeHtml(u.fullName)}
+          <span class="role">${escapeHtml(roleText(u))}</span>
+          <span class="sched">${summary ? escapeHtml(summary) : "Sin horario · clic para definirlo"}</span>
+        </td>`;
+        for (const k of keys) {
+          const mark = markFor(k, u);
+          const auto = mark.source === "SCHEDULE";
+          const cls =
+            mark.state === "AVAILABLE"
+              ? auto ? "ok-auto auto" : "ok"
+              : mark.state === "OFF"
+                ? auto ? "off-auto auto" : "off"
+                : "";
+          const text = mark.state === "AVAILABLE" ? "Sí" : mark.state === "OFF" ? "No" : "·";
+          const n = tasksFor(k, u.uid);
+          html += `<td class="cell ${cls}" data-date="${k}" data-uid="${escapeAttr(u.uid)}">
+            <span class="mark">${text}</span>
+            ${n ? `<span class="ntasks">${n} tarea(s)</span>` : ""}
+          </td>`;
+        }
+        html += `</tr>`;
+      }
+
+      html += `<tr class="totals"><td class="name">Disponibles</td>`;
+      for (const k of keys) {
+        const n = staff.filter((u) => markFor(k, u).state === "AVAILABLE").length;
+        html += `<td>${n} de ${staff.length}</td>`;
+      }
+      html += `</tr></tbody></table>`;
+
+      $("grid").innerHTML = html;
+
+      for (const td of document.querySelectorAll(".roster td.cell")) {
+        td.onclick = () => toggleCell(td.dataset.date, td.dataset.uid);
+      }
+      for (const td of document.querySelectorAll(".roster td.name[data-sched]")) {
+        td.onclick = () => {
+          const u = allStaff.find((x) => x.uid === td.dataset.sched);
+          if (u) openSchedule(u);
+        };
+      }
+    }
+
+    /** Al navegar o editar se vuelve siempre al cuadrante vivo. */
+    function goLive() {
+      viewing = null;
+      setMsg("");
+    }
+
+    $("btnPrev").onclick = () => { goLive(); anchor = shiftWeek(anchor, -1); watchWeek(); render(); };
+    $("btnNext").onclick = () => { goLive(); anchor = shiftWeek(anchor, 1); watchWeek(); render(); };
+    $("btnToday").onclick = () => { goLive(); anchor = mondayOf(new Date()); watchWeek(); render(); };
+    $("btnCopy").onclick = () => copyPrevious();
+    $("btnClose").onclick = () => closeWeek();
+    $("btnMail").onclick = () => sendByEmail();
+    $("btnPrint").onclick = () => window.print();
+
+    $("savedPicker").onchange = (e) => {
+      const key = e.target.value;
+      viewing = key ? savedRosters.find((r) => r.weekStart === key) || null : null;
+      setMsg("");
+      render();
+    };
+
+    onSnapshot(
+      query(collection(db, "rosters"), orderBy("weekStart", "desc"), limit(52)),
+      (snap) => {
+        savedRosters = snap.docs.map((d) => d.data());
+        if (viewing) {
+          viewing = savedRosters.find((r) => r.weekStart === viewing.weekStart) || null;
+        }
+        render();
+      },
+      (e) => setMsg(e.message)
+    );
+
+    $("schedForm").addEventListener("submit", (e) => { e.preventDefault(); saveSchedule(false); });
+    $("btnSchedClear").onclick = () => saveSchedule(true);
+    $("btnSchedClose").onclick = () => ($("schedModal").hidden = true);
+    $("schedModal").addEventListener("click", (e) => {
+      if (e.target === $("schedModal")) $("schedModal").hidden = true;
+    });
+    for (const id of ["schedStart", "schedEnd", "schedFrom", "schedTo"]) {
+      $(id).addEventListener("change", renderSchedPreview);
+    }
+
+    onSnapshot(query(collection(db, "users"), where("active", "==", true)), (snap) => {
+      allStaff = sortPeopleForAssign(snap.docs.map((d) => ({ uid: d.id, ...d.data() })));
+      render();
+    });
+
+    onSnapshot(query(collection(db, "tasks"), orderBy("taskDate", "desc")), (snap) => {
+      tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      render();
+    });
+
+    watchWeek();
+    render();
+  </script>
+</body>
+</html>

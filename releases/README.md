@@ -1,17 +1,12 @@
-# APK locales GREFA Tareas
+# APK locales — GREFA Tareas
 
-Salida del build local (sin EAS cloud):
+Tras compilar con `scripts/build-apk-local.ps1`, la APK queda aquí como `GREFA_TAREAS_x.apk`.
 
-```text
-GREFA_TAREAS_<version>.apk
-last_apk_path.txt
-```
+## Distribución
 
-Generar:
+1. Compila: `npm run build:apk`
+2. El archivo queda en esta carpeta (`releases/`)
+3. **Distribúyela manualmente** (Drive, WhatsApp, etc.) a cada usuario
 
-```powershell
-cd C:\grefa-tareas
-npm run build:apk
-```
-
-O: `build-apk.bat`
+La **web** se actualiza sola al desplegar hosting (`firebase deploy --only hosting`).  
+La APK **no** se actualiza automáticamente: tú envías la nueva versión cuando corresponda.

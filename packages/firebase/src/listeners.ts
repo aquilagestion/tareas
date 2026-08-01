@@ -11,7 +11,7 @@ import {
 import type { Task, User, TaskLog } from "@grefa/shared";
 import { getDb } from "./firebase";
 
-function mapDoc<T extends { id: string }>(id: string, data: DocumentData): T {
+function mapDoc<T>(id: string, data: DocumentData): T {
   return { id, ...data } as T;
 }
 
@@ -42,6 +42,18 @@ export function subscribeActiveUsers(
   const q = query(collection(getDb(), "users"), where("active", "==", true));
   return onSnapshot(
     q,
+    (snap) => onChange(snap.docs.map((d) => mapDoc<User>(d.id, d.data()))),
+    (err) => onError?.(err)
+  );
+}
+
+/** Todas las fichas, activas e inactivas (ADMIN) */
+export function subscribeAllUsers(
+  onChange: (users: User[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(getDb(), "users"),
     (snap) => onChange(snap.docs.map((d) => mapDoc<User>(d.id, d.data()))),
     (err) => onError?.(err)
   );
@@ -83,12 +95,43 @@ export function subscribeTasksByStatus(
   );
 }
 
+/** Todas las tareas (calendario / asumir en móvil) */
+export function subscribeAllTasks(
+  onChange: (tasks: Task[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const q = query(collection(getDb(), "tasks"), orderBy("taskDate", "desc"));
+  return onSnapshot(
+    q,
+    (snap) => onChange(snap.docs.map((d) => mapDoc<Task>(d.id, d.data()))),
+    (err) => onError?.(err)
+  );
+}
+
 /** Logs de auditoría (web admin) */
 export function subscribeTaskLogs(
   onChange: (logs: TaskLog[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(collection(getDb(), "taskLogs"), orderBy("completionDate", "desc"));
+  return onSnapshot(
+    q,
+    (snap) => onChange(snap.docs.map((d) => mapDoc<TaskLog>(d.id, d.data()))),
+    (err) => onError?.(err)
+  );
+}
+
+/** Tareas realizadas por un usuario (histórico móvil) */
+export function subscribeTaskLogsForUser(
+  uid: string,
+  onChange: (logs: TaskLog[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const q = query(
+    collection(getDb(), "taskLogs"),
+    where("completedByUserId", "==", uid),
+    orderBy("completionDate", "desc")
+  );
   return onSnapshot(
     q,
     (snap) => onChange(snap.docs.map((d) => mapDoc<TaskLog>(d.id, d.data()))),

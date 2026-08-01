@@ -2,7 +2,7 @@
   "expo": {
     "name": "GREFA Tareas",
     "slug": "grefa-tareas",
-    "version": "0.1.0",
+    "version": "0.1.24",
     "orientation": "portrait",
     "scheme": "grefa-tareas",
     "userInterfaceStyle": "light",
@@ -15,7 +15,8 @@
     },
     "android": {
       "package": "org.grefa.tareas",
-      "versionCode": 1,
+      "versionCode": 24,
+      "permissions": ["android.permission.REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#2F6B3A"

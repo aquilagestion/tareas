@@ -1,6 +1,7 @@
 export {
   getFirebaseApp,
   getFirebaseAuth,
+  getSecondaryAuth,
   getDb,
   resolveFirebaseConfig,
   auth,
@@ -11,7 +12,10 @@ export {
 export {
   subscribeUser,
   subscribeActiveUsers,
+  subscribeAllUsers,
   subscribeTasksForUser,
   subscribeTasksByStatus,
+  subscribeAllTasks,
   subscribeTaskLogs,
+  subscribeTaskLogsForUser,
 } from "./listeners";

@@ -37,11 +37,12 @@ service cloud.firestore {
             && request.resource.data.active == true
             && request.resource.data.uid == uid);
 
+      // El horario semanal lo fija el administrador en el cuadrante
       allow update: if isAdmin()
         || (isActive()
             && uid == request.auth.uid
             && !request.resource.data.diff(resource.data).affectedKeys()
-                .hasAny(['role', 'active', 'userType']));
+                .hasAny(['role', 'active', 'userType', 'schedule']));
 
       allow delete: if false;
     }
@@ -58,13 +59,13 @@ service cloud.firestore {
       // ADMIN: cualquier actualización (validar, devolver, editar)
       allow update: if isAdmin();
 
-      // WORKER asignado: PENDING → IN_REVIEW
+      // WORKER asignado: PENDING → IN_REVIEW (+ hora de realización)
       allow update: if isWorker()
         && isAssigned(resource.data)
         && resource.data.status == 'PENDING'
         && request.resource.data.status == 'IN_REVIEW'
         && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status']);
+            .hasOnly(['status', 'completedAt', 'completedBy', 'completedByName', 'completionNotes', 'materialShortage']);
 
       // WORKER no asignado (chequeo cruzado): PENDING → IN_REVIEW
       allow update: if isWorker()
@@ -72,7 +73,57 @@ service cloud.firestore {
         && resource.data.status == 'PENDING'
         && request.resource.data.status == 'IN_REVIEW'
         && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status']);
+            .hasOnly(['status', 'completedAt', 'completedBy', 'completedByName', 'completionNotes', 'materialShortage']);
+
+      // WORKER: reportar falta de material sin completar la tarea
+      allow update: if isWorker()
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['materialShortage']);
+
+      // WORKER: asumir tarea ajena (añadirse a asignados, sigue PENDING)
+      allow update: if isWorker()
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'PENDING'
+        && !(request.auth.uid in resource.data.assignedUserIds)
+        && request.auth.uid in request.resource.data.assignedUserIds
+        && request.resource.data.assignedUserIds.size() == resource.data.assignedUserIds.size() + 1
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['assignedUserIds', 'assignedUsersInfo']);
+
+      // ADMIN: asumir tarea ajena (añadirse a asignados)
+      allow update: if isAdmin()
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'PENDING'
+        && request.auth.uid in request.resource.data.assignedUserIds
+        && request.resource.data.assignedUserIds.size() >= resource.data.assignedUserIds.size()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['assignedUserIds', 'assignedUsersInfo']);
+
+      // ADMIN: marcar como hecha (campo / responsable en tareas propias)
+      allow update: if isAdmin()
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'IN_REVIEW'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'completedAt', 'completedBy', 'completedByName', 'completionNotes', 'materialShortage']);
+
+      // ADMIN: chequeo cruzado PENDING → IN_REVIEW
+      allow update: if isAdmin()
+        && !isAssigned(resource.data)
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'IN_REVIEW'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'completedAt', 'completedBy', 'completedByName', 'completionNotes', 'materialShortage']);
+
+      // WORKER asignado: editar contenido mientras no esté chequeada
+      allow update: if isWorker()
+        && isAssigned(resource.data)
+        && resource.data.status in ['PENDING', 'IN_REVIEW']
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['title', 'description', 'taskDate', 'startTime', 'endTime',
+                      'materialShortage', 'completionNotes', 'updatedAt']);
 
       allow delete: if isAdmin();
     }
@@ -92,11 +143,66 @@ service cloud.firestore {
           'completedByName',
           'wasAssignedToHim',
           'comments',
-          'concatenatedText',
-          'locationDateText'
+          'taskTitle',
+          'taskDescription'
         ]);
 
       allow update, delete: if isAdmin();
+    }
+
+    // ——— notificationQueue (avisos pendientes desde web) ———
+    match /notificationQueue/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.type == 'TASK_ASSIGNED'
+        && request.resource.data.status == 'PENDING';
+
+      allow create: if isActive()
+        && request.resource.data.type == 'MATERIAL_SHORTAGE'
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'type', 'status', 'taskId', 'taskTitle', 'message', 'reportedBy', 'reportedByName', 'createdAt'
+        ]);
+      allow update, delete: if isAdmin();
+    }
+
+    // ——— availability (cuadrante semanal de personal) ———
+    match /availability/{id} {
+      allow read: if isActive();
+      allow write: if isAdmin();
+    }
+
+    // ——— rosters (histórico de cuadrantes cerrados) ———
+    match /rosters/{weekStart} {
+      allow read: if isActive();
+      allow create, update: if isAdmin()
+        && request.resource.data.weekStart == weekStart
+        && request.resource.data.closedBy == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // ——— notifications (avisos en vivo dentro de la app) ———
+    match /notifications/{id} {
+      allow read: if isActive();
+
+      allow create: if isActive()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.type in ['TASK_TAKEN', 'TASK_DONE']
+        && request.resource.data.audience in ['ALL', 'USERS']
+        && request.resource.data.keys().hasAll([
+          'type', 'audience', 'recipients', 'taskId', 'taskTitle',
+          'actorUid', 'actorName', 'message', 'createdAt'
+        ]);
+
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ——— notificationLogs (histórico envíos) ———
+    match /notificationLogs/{id} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
     }
   }
 }

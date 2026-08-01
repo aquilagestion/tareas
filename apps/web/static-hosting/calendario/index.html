@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Calendario — GREFA Tareas</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+</head>
+<body>
+  <div id="nav"></div>
+  <main class="container container-full stack">
+    <div>
+      <h1 class="h1" style="font-size:1.75rem">Calendario de tareas</h1>
+      <p class="muted">Vista semanal y diaria de tareas asignadas.</p>
+    </div>
+
+    <div class="cal-toolbar">
+      <button type="button" class="tab-btn active" id="btnWeek">Semanal</button>
+      <button type="button" class="tab-btn" id="btnDay">Diaria</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnPrev">← Anterior</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnToday">Hoy</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnNext">Siguiente →</button>
+      <strong id="calLabel" class="small"></strong>
+    </div>
+
+    <div id="weekView"></div>
+    <div id="dayView" hidden class="day-list"></div>
+  </main>
+  <script type="module">
+    import { requireAdmin, renderNav, logout, escapeHtml, formatTaskWhen, $, db } from "/js/admin.js";
+    import { collection, orderBy, query, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const { profile } = await requireAdmin();
+    $("nav").innerHTML = renderNav("calendario", profile.fullName);
+    $("btnLogout").onclick = () => logout();
+
+    let tasks = [];
+    let mode = "week";
+    let anchor = startOfDay(new Date());
+
+    const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+    function startOfDay(d) {
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+
+    function taskDayKey(t) {
+      const ts = t.taskDate;
+      if (!ts?.toDate) return "";
+      const d = ts.toDate();
+      return d.toISOString().slice(0, 10);
+    }
+
+    function mondayOf(d) {
+      const x = startOfDay(d);
+      const day = x.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      x.setDate(x.getDate() + diff);
+      return x;
+    }
+
+    function renderWeek() {
+      const mon = mondayOf(anchor);
+      $("calLabel").textContent = `Semana del ${mon.toLocaleDateString("es-ES")}`;
+      let html = `<div class="cal-grid">`;
+      for (const label of DAYS) html += `<div class="cal-head">${label}</div>`;
+      const todayKey = new Date().toISOString().slice(0, 10);
+      for (let i = 0; i < 7; i++) {
+        const cell = new Date(mon);
+        cell.setDate(mon.getDate() + i);
+        const key = cell.toISOString().slice(0, 10);
+        const isToday = key === todayKey;
+        const dayTasks = tasks.filter((t) => taskDayKey(t) === key);
+        html += `<div class="cal-cell ${isToday ? "today" : ""}">
+          <div class="small"><strong>${cell.getDate()}</strong></div>`;
+        for (const t of dayTasks) {
+          const names = (t.assignedUsersInfo || []).map((a) => a.fullName.split(" ")[0]).join(", ");
+          html += `<div class="cal-task" title="${escapeHtml(t.description || "")}">${escapeHtml(t.title)} ${t.startTime ? "· " + t.startTime : ""}<br/><span class="muted">${escapeHtml(names)}</span></div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+      $("weekView").innerHTML = html;
+    }
+
+    function renderDay() {
+      const key = anchor.toISOString().slice(0, 10);
+      $("calLabel").textContent = anchor.toLocaleDateString("es-ES", {
+        weekday: "long", day: "numeric", month: "long", year: "numeric",
+      });
+      const dayTasks = tasks.filter((t) => taskDayKey(t) === key);
+      if (!dayTasks.length) {
+        $("dayView").innerHTML = `<div class="card muted" style="text-align:center">Sin tareas este día.</div>`;
+        return;
+      }
+      $("dayView").innerHTML = dayTasks.map((t) => {
+        const names = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ");
+        return `<article class="card">
+          <h2 class="h2">${escapeHtml(t.title || "")}</h2>
+          <p class="small muted">${escapeHtml(formatTaskWhen(t))} · ${escapeHtml(t.status || "")}</p>
+          <p>${escapeHtml(t.description || "—")}</p>
+          <p class="small"><strong>Asignados:</strong> ${escapeHtml(names)}</p>
+        </article>`;
+      }).join("");
+    }
+
+    function render() {
+      $("weekView").hidden = mode !== "week";
+      $("dayView").hidden = mode !== "day";
+      if (mode === "week") renderWeek();
+      else renderDay();
+    }
+
+    $("btnWeek").onclick = () => { mode = "week"; $("btnWeek").classList.add("active"); $("btnDay").classList.remove("active"); render(); };
+    $("btnDay").onclick = () => { mode = "day"; $("btnDay").classList.add("active"); $("btnWeek").classList.remove("active"); render(); };
+    $("btnToday").onclick = () => { anchor = startOfDay(new Date()); render(); };
+    $("btnPrev").onclick = () => {
+      anchor.setDate(anchor.getDate() - (mode === "week" ? 7 : 1));
+      render();
+    };
+    $("btnNext").onclick = () => {
+      anchor.setDate(anchor.getDate() + (mode === "week" ? 7 : 1));
+      render();
+    };
+
+    onSnapshot(query(collection(db, "tasks"), orderBy("taskDate", "desc")), (snap) => {
+      tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      render();
+    });
+  </script>
+</body>
+</html>
