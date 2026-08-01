@@ -5,13 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Calendario — GREFA Tareas</title>
   <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    .cal-task { cursor:pointer; }
+    .cal-task:hover { border-color:#34d399; }
+    .day-list .card { cursor:pointer; }
+    .warn-box { color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:0.5rem 0.65rem;border-radius:6px;font-size:0.85rem;margin:0.5rem 0 0; }
+    .notes-box { background:#f5f5f4;border-radius:6px;padding:0.5rem 0.65rem;font-size:0.85rem;margin:0.5rem 0 0; }
+  </style>
 </head>
 <body>
   <div id="nav"></div>
   <main class="container container-full stack">
     <div>
       <h1 class="h1" style="font-size:1.75rem">Calendario de tareas</h1>
-      <p class="muted">Vista semanal y diaria de tareas asignadas.</p>
+      <p class="muted">Vista semanal y diaria de tareas asignadas. Pulsa una tarea para ver el detalle y editarla.</p>
     </div>
 
     <div class="cal-toolbar">
@@ -23,11 +30,57 @@
       <strong id="calLabel" class="small"></strong>
     </div>
 
+    <p id="ok" class="ok" style="display:none"></p>
+    <p id="err" class="alert" style="display:none"></p>
+
     <div id="weekView"></div>
     <div id="dayView" hidden class="day-list"></div>
   </main>
+
+  <div id="detModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:34rem">
+      <div id="detBody"></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-primary" id="btnDetEdit">Editar tarea</button>
+        <button type="button" class="btn btn-secondary" id="btnDetClose">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editModal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width:36rem">
+      <h2 class="h2">Editar tarea</h2>
+      <form id="editForm" class="stack">
+        <input type="hidden" id="editTaskId"/>
+        <label class="field">Título<input class="input" id="editTitle" required/></label>
+        <label class="field">Descripción<textarea id="editDescription"></textarea></label>
+        <div class="grid grid-3">
+          <label class="field">Fecha<input class="input" id="editDate" type="date" required/></label>
+          <label class="field">Hora inicio<input class="input" id="editStart" type="time"/></label>
+          <label class="field">Hora fin<input class="input" id="editEnd" type="time"/></label>
+        </div>
+        <label class="field">Compra de materiales / falta de material<textarea id="editMaterial" placeholder="Ej. guantes, comida para aves…"></textarea></label>
+        <label class="field">Observaciones<textarea id="editNotes" placeholder="Incidencias, estado del recinto, material usado…"></textarea></label>
+        <p class="small muted" style="margin:0">Material y observaciones salen en el informe diario de auditoría.</p>
+        <div>
+          <p class="small" style="margin:0 0 0.35rem">Asignados</p>
+          <div class="assignee-list" id="editAssignees"></div>
+        </div>
+        <p id="editErr" class="alert" style="display:none"></p>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="btnCancelEdit">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script type="module">
-    import { requireAdmin, renderNav, logout, escapeHtml, formatTaskWhen, $, db } from "/js/admin.js";
+    import {
+      requireAdmin, renderNav, logout, escapeHtml, escapeAttr, showError, formatTaskWhen,
+      dateInputValue, updateTask, subscribeActiveUsers, sortPeopleForAssign, roleLabel, $, db,
+    } from "/js/admin.js";
+    import { TASK_STATUS_LABELS, formatStamp } from "/js/my-tasks.js";
     import { collection, orderBy, query, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
     const { profile } = await requireAdmin();
@@ -35,10 +88,17 @@
     $("btnLogout").onclick = () => logout();
 
     let tasks = [];
+    let activeUsers = [];
+    let selectedId = null;
     let mode = "week";
     let anchor = startOfDay(new Date());
 
     const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+    subscribeActiveUsers(
+      (users) => { activeUsers = users; },
+      (err) => showError($("err"), err.message)
+    );
 
     function startOfDay(d) {
       return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -74,8 +134,8 @@
         html += `<div class="cal-cell ${isToday ? "today" : ""}">
           <div class="small"><strong>${cell.getDate()}</strong></div>`;
         for (const t of dayTasks) {
-          const names = (t.assignedUsersInfo || []).map((a) => a.fullName.split(" ")[0]).join(", ");
-          html += `<div class="cal-task" title="${escapeHtml(t.description || "")}">${escapeHtml(t.title)} ${t.startTime ? "· " + t.startTime : ""}<br/><span class="muted">${escapeHtml(names)}</span></div>`;
+          const names = (t.assignedUsersInfo || []).map((a) => String(a.fullName || "").split(" ")[0]).join(", ");
+          html += `<div class="cal-task" data-id="${escapeAttr(t.id)}" title="Pulsa para ver el detalle y editarla">${escapeHtml(t.title || "")} ${t.startTime ? "· " + escapeHtml(t.startTime) : ""}<br/><span class="muted">${escapeHtml(names)}</span></div>`;
         }
         html += `</div>`;
       }
@@ -95,11 +155,12 @@
       }
       $("dayView").innerHTML = dayTasks.map((t) => {
         const names = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ");
-        return `<article class="card">
+        return `<article class="card" data-id="${escapeAttr(t.id)}">
           <h2 class="h2">${escapeHtml(t.title || "")}</h2>
-          <p class="small muted">${escapeHtml(formatTaskWhen(t))} · ${escapeHtml(t.status || "")}</p>
+          <p class="small muted">${escapeHtml(formatTaskWhen(t))} · ${escapeHtml(TASK_STATUS_LABELS[t.status] || t.status || "")}</p>
           <p>${escapeHtml(t.description || "—")}</p>
-          <p class="small"><strong>Asignados:</strong> ${escapeHtml(names)}</p>
+          <p class="small"><strong>Asignados:</strong> ${escapeHtml(names || "—")}</p>
+          <p class="small" style="color:var(--primary);font-weight:600;margin:0.5rem 0 0">Pulsa para ver el detalle y editarla</p>
         </article>`;
       }).join("");
     }
@@ -110,6 +171,110 @@
       if (mode === "week") renderWeek();
       else renderDay();
     }
+
+    function openDetail(id) {
+      const t = tasks.find((x) => x.id === id);
+      if (!t) return;
+      selectedId = id;
+      const names = (t.assignedUsersInfo || []).map((a) => a.fullName).join(", ");
+      const material = String(t.materialShortage || "").trim();
+      $("detBody").innerHTML = `
+        <h2 class="h2">${escapeHtml(t.title || "")}</h2>
+        <p class="small muted" style="margin:0">Programada: ${escapeHtml(formatTaskWhen(t))}</p>
+        <p class="small" style="margin:0.4rem 0 0"><span class="badge">${escapeHtml(TASK_STATUS_LABELS[t.status] || t.status || "")}</span></p>
+        ${t.description ? `<p style="margin:0.75rem 0 0">${escapeHtml(t.description)}</p>` : ""}
+        <p class="small" style="margin:0.75rem 0 0"><strong>Asignados:</strong> ${escapeHtml(names || "—")}</p>
+        ${t.completedByName ? `<p class="small muted" style="margin:0.35rem 0 0">Realizada por ${escapeHtml(t.completedByName)} · ${escapeHtml(formatStamp(t.completedAt))}</p>` : ""}
+        ${material ? `<p class="warn-box"><strong>⚠ Falta de material:</strong> ${escapeHtml(material)}</p>` : ""}
+        ${t.completionNotes ? `<p class="notes-box"><strong>Observaciones:</strong> ${escapeHtml(t.completionNotes)}</p>` : ""}
+      `;
+      $("detModal").hidden = false;
+    }
+
+    function openEdit(id) {
+      const t = tasks.find((x) => x.id === id);
+      if (!t) return;
+      $("editTaskId").value = id;
+      $("editTitle").value = t.title || "";
+      $("editDescription").value = t.description || "";
+      $("editDate").value = dateInputValue(t.taskDate);
+      $("editStart").value = t.startTime || "";
+      $("editEnd").value = t.endTime || "";
+      $("editMaterial").value = t.materialShortage || "";
+      $("editNotes").value = t.completionNotes || "";
+      const selected = new Set(t.assignedUserIds || []);
+      let html = "";
+      let lastGroup = "";
+      for (const u of sortPeopleForAssign(activeUsers)) {
+        const group = roleLabel(u.role, u.userType);
+        if (group !== lastGroup) {
+          html += `<div class="assignee-group">${escapeHtml(group)}</div>`;
+          lastGroup = group;
+        }
+        const chk = selected.has(u.uid) ? " checked" : "";
+        html += `<label>
+          <input type="checkbox" name="editAssignee" value="${escapeAttr(u.uid)}"${chk}
+            data-name="${escapeAttr(u.fullName || "")}" data-dni="${escapeAttr(u.dni || "")}"
+            data-type="${escapeAttr(u.userType || "TRABAJADOR_GREFA")}"/>
+          <span>${escapeHtml(u.fullName || "")}</span>
+        </label>`;
+      }
+      $("editAssignees").innerHTML = html || `<span class="muted small">Sin personal activo</span>`;
+      showError($("editErr"), null);
+      $("detModal").hidden = true;
+      $("editModal").hidden = false;
+    }
+
+    $("weekView").addEventListener("click", (e) => {
+      const el = e.target.closest(".cal-task[data-id]");
+      if (el) openDetail(el.dataset.id);
+    });
+
+    $("dayView").addEventListener("click", (e) => {
+      const el = e.target.closest(".card[data-id]");
+      if (el) openDetail(el.dataset.id);
+    });
+
+    $("btnDetClose").onclick = () => ($("detModal").hidden = true);
+    $("btnDetEdit").onclick = () => selectedId && openEdit(selectedId);
+    $("btnCancelEdit").onclick = () => ($("editModal").hidden = true);
+    $("detModal").addEventListener("click", (e) => {
+      if (e.target === $("detModal")) $("detModal").hidden = true;
+    });
+    $("editModal").addEventListener("click", (e) => {
+      if (e.target === $("editModal")) $("editModal").hidden = true;
+    });
+
+    $("editForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = $("editTaskId").value;
+      const assignees = [...document.querySelectorAll('input[name="editAssignee"]:checked')].map((el) => ({
+        uid: el.value,
+        fullName: el.dataset.name,
+        dni: el.dataset.dni,
+        userType: el.dataset.type,
+      }));
+      if (!assignees.length) {
+        showError($("editErr"), "Selecciona al menos un asignado.");
+        return;
+      }
+      try {
+        await updateTask(id, {
+          title: $("editTitle").value,
+          description: $("editDescription").value,
+          taskDate: $("editDate").value,
+          startTime: $("editStart").value,
+          endTime: $("editEnd").value,
+          materialShortage: $("editMaterial").value,
+          completionNotes: $("editNotes").value,
+        }, assignees);
+        $("editModal").hidden = true;
+        $("ok").textContent = "Tarea actualizada.";
+        $("ok").style.display = "block";
+      } catch (ex) {
+        showError($("editErr"), ex.message);
+      }
+    });
 
     $("btnWeek").onclick = () => { mode = "week"; $("btnWeek").classList.add("active"); $("btnDay").classList.remove("active"); render(); };
     $("btnDay").onclick = () => { mode = "day"; $("btnDay").classList.add("active"); $("btnWeek").classList.remove("active"); render(); };
@@ -126,7 +291,9 @@
     onSnapshot(query(collection(db, "tasks"), orderBy("taskDate", "desc")), (snap) => {
       tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       render();
-    });
+      // Con el detalle abierto, se refresca para no mostrar datos ya viejos.
+      if (selectedId && !$("detModal").hidden) openDetail(selectedId);
+    }, (err) => showError($("err"), err.message));
   </script>
 </body>
 </html>
