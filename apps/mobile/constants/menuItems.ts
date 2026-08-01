@@ -18,6 +18,11 @@ export const WORKER_MENU_ITEMS: MenuItemDef[] = [
     route: "/calendar",
   },
   {
+    title: "Cuadrante",
+    description: "Turnos publicados del equipo",
+    route: "/roster",
+  },
+  {
     title: "Asumir tareas",
     description: "Tomar tareas asignadas a otras personas",
     route: "/others",
@@ -53,7 +58,7 @@ export const ADMIN_MENU_ITEMS: MenuItemDef[] = [
   },
   {
     title: "Cuadrante",
-    description: "Personal disponible cada día de la semana",
+    description: "Marcar turnos, cerrar y publicar la semana",
     route: "/admin-roster",
   },
   {

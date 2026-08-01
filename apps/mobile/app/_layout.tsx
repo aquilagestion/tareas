@@ -40,7 +40,8 @@ export default function RootLayout() {
             <Stack.Screen name="admin-new-task" options={{ title: "Nueva tarea", ...withMenu }} />
             <Stack.Screen name="admin-revision" options={{ title: "Revisión", ...withMenu }} />
             <Stack.Screen name="admin-audit" options={{ title: "Auditoría", ...withMenu }} />
-            <Stack.Screen name="admin-roster" options={{ title: "Cuadrante", ...withMenu }} />
+            <Stack.Screen name="roster" options={{ title: "Cuadrante", ...withMenu }} />
+            <Stack.Screen name="admin-roster" options={{ title: "Editar cuadrante", ...withMenu }} />
             <Stack.Screen name="admin-staff" options={{ title: "Personal", ...withMenu }} />
             <Stack.Screen name="calendar" options={{ title: "Calendario", ...withMenu }} />
             <Stack.Screen name="others" options={{ title: "Asumir tareas", ...withMenu }} />
